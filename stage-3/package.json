@@ -1,0 +1,13 @@
+{
+  "name": "tablekeeper-stage3",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tablekeeper stage 3: booking policies, history and recurring reservations",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
