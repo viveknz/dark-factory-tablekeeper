@@ -1,0 +1,13 @@
+{
+  "name": "tablekeeper-stage4",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tablekeeper stage 4: seating changes and recurring amendments",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

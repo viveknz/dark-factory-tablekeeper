@@ -1,0 +1,305 @@
+:root {
+  --cream: #faf6ef;
+  --cream-deep: #f1e8d8;
+  --ink: #2b2420;
+  --ink-soft: #5a5048;
+  --wine: #7a2e2e;
+  --wine-deep: #5e2222;
+  --gold: #b8863b;
+  --green: #3f5d42;
+  --red: #a4302a;
+  --red-bg: #fbeae8;
+  --amber: #8a5a16;
+  --amber-bg: #fdf1dc;
+  --line: #e4d9c6;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(43, 36, 32, 0.06), 0 6px 20px rgba(43, 36, 32, 0.07);
+  font-size: 16px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--cream);
+  color: var(--ink);
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
+  line-height: 1.5;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+h1, h2 {
+  font-family: Georgia, "Iowan Old Style", serif;
+  color: var(--wine-deep);
+  margin: 0 0 0.6em;
+  letter-spacing: 0.01em;
+}
+
+h1 { font-size: 1.7rem; }
+h2 { font-size: 1.3rem; }
+
+a { color: var(--wine); }
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  background: var(--ink);
+  color: #fff;
+  padding: 0.5em 1em;
+  z-index: 100;
+}
+.skip-link:focus { left: 0; }
+
+/* ---- header -------------------------------------------------------------- */
+
+.site-header {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  padding: 0.9rem 1.25rem;
+  background: var(--wine-deep);
+  color: #fff8ee;
+  box-shadow: var(--shadow);
+}
+
+.site-header .brand {
+  font-family: Georgia, serif;
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: #fff8ee;
+  text-decoration: none;
+  letter-spacing: 0.02em;
+}
+
+.site-nav {
+  display: flex;
+  gap: 1rem;
+  flex: 1;
+}
+
+.site-nav a {
+  color: #f1e3cf;
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+.site-nav a:hover, .site-nav a:focus-visible { text-decoration: underline; }
+
+.auth-area {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.95rem;
+}
+
+.current-user {
+  font-weight: 600;
+  color: #fff8ee;
+}
+.current-user::before {
+  content: "👋 ";
+}
+
+/* ---- layout --------------------------------------------------------------- */
+
+main {
+  flex: 1;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1.5rem 1.1rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.4rem;
+  box-shadow: var(--shadow);
+}
+
+/* ---- forms ----------------------------------------------------------------- */
+
+form { display: flex; flex-direction: column; gap: 0.9rem; }
+.search-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.9rem 1rem; align-items: end; }
+.search-form .btn { grid-column: 1 / -1; justify-self: start; }
+
+.field { display: flex; flex-direction: column; gap: 0.3rem; }
+.field label { font-size: 0.85rem; color: var(--ink-soft); font-weight: 600; }
+
+input, select {
+  font: inherit;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #cbbfa9;
+  border-radius: 6px;
+  background: #fffdf9;
+  color: var(--ink);
+}
+
+input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 1px;
+}
+
+.btn {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-weight: 600;
+  font-size: 0.95rem;
+  padding: 0.6rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.btn-primary { background: var(--wine); color: #fff; }
+.btn-primary:hover { background: var(--wine-deep); }
+.btn-primary:disabled { background: #c9a8a8; cursor: not-allowed; }
+
+.btn-ghost { background: transparent; color: #fff8ee; border-color: rgba(255,255,255,0.5); }
+.btn-ghost:hover { background: rgba(255,255,255,0.12); }
+
+.btn-danger { background: #fff; color: var(--red); border-color: var(--red); }
+.btn-danger:hover { background: var(--red-bg); }
+
+/* ---- feedback states -------------------------------------------------------- */
+
+.error-text {
+  background: var(--red-bg);
+  color: var(--red);
+  border: 1px solid #e4b6b1;
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  font-family: system-ui, sans-serif;
+  font-size: 0.92rem;
+  margin: 0;
+}
+
+.uncertain-text {
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid #e7cb93;
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  font-family: system-ui, sans-serif;
+  font-size: 0.92rem;
+  margin: 0;
+}
+
+.empty-state, .loading-state {
+  font-family: system-ui, sans-serif;
+  color: var(--ink-soft);
+  padding: 1rem 0;
+}
+
+/* ---- availability grid ------------------------------------------------------ */
+
+.grid-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 8px;
+}
+
+.availability-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: system-ui, sans-serif;
+  font-size: 0.9rem;
+}
+
+.availability-grid th, .availability-grid td {
+  border: 1px solid var(--line);
+  padding: 0.4rem 0.5rem;
+  text-align: center;
+}
+
+.availability-grid thead th {
+  background: var(--cream-deep);
+  color: var(--ink-soft);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.availability-grid tbody th {
+  background: var(--cream-deep);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.slot-cell {
+  width: 100%;
+  min-width: 4.5rem;
+  padding: 0.4rem 0.3rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: system-ui, sans-serif;
+}
+
+.slot-available {
+  background: #e9f1e9;
+  color: var(--green);
+  border-color: #c3d9c4;
+}
+.slot-available:hover { background: #d9ebda; }
+
+.slot-unavailable {
+  background: #f1efe9;
+  color: #a79c8c;
+  cursor: not-allowed;
+}
+
+/* ---- booking form / confirmation --------------------------------------------- */
+
+.booking-summary { font-size: 1.02rem; color: var(--ink); }
+
+.confirmation {
+  border-color: #c3d9c4;
+  background: #f3f8f3;
+}
+.confirmation-reference-label {
+  font-family: system-ui, sans-serif;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  margin-bottom: 0.1rem;
+}
+.confirmation-reference {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 1.6rem;
+  letter-spacing: 0.08em;
+  color: var(--green);
+  margin: 0 0 0.6rem;
+}
+
+/* ---- lookup ------------------------------------------------------------------ */
+
+.reservation-detail { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.reservation-status { text-transform: capitalize; font-weight: 700; }
+
+/* ---- responsive --------------------------------------------------------------- */
+
+@media (max-width: 480px) {
+  .site-header { padding: 0.75rem 0.9rem; gap: 0.75rem; }
+  .site-header .brand { font-size: 1rem; }
+  main { padding: 1rem 0.75rem 2.5rem; gap: 1rem; }
+  .panel { padding: 1rem; }
+  .search-form { grid-template-columns: 1fr; }
+  .availability-grid { font-size: 0.78rem; }
+  .slot-cell { min-width: 3.4rem; padding: 0.35rem 0.2rem; }
+}
