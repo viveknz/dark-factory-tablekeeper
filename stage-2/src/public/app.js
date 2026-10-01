@@ -140,11 +140,12 @@
 
   // ===== shared: a conditional error paragraph in a named slot ===============
 
-  function showErrorIn(slotName, testid, message) {
+  function showErrorIn(slotName, testid, message, cssClass) {
     const s = slot(slotName);
     if (!s) return;
     s.innerHTML = "";
-    s.appendChild(el("p", { "data-testid": testid, class: "error-text", role: "alert", text: message }));
+    const role = cssClass === "uncertain-text" ? "status" : "alert";
+    s.appendChild(el("p", { "data-testid": testid, class: cssClass || "error-text", role: role, text: message }));
   }
 
   // ===== bootstrap =============================================================
@@ -434,7 +435,8 @@
       } catch (_e) {
         showErrorIn("booking-feedback", "booking-uncertain",
           "We couldn't confirm whether your booking went through. Press “Book this table” again "
-          + "to retry safely — it will not create a duplicate booking.");
+          + "to retry safely — it will not create a duplicate booking.",
+          "uncertain-text");
       }
     }
 
