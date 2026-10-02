@@ -90,3 +90,19 @@ Size of the result (non-blank lines under `src/`): 1,020 / 2,056 / 2,592 / 2,957
 ## 7. Reusing this on another problem
 
 Point the three mandates at a different spec and dispatch as in section 2. What you would change: the repository path, the spec, and the commands the reviewer runs. The mandates themselves do not need editing beyond the seat names and handles.
+
+## 8. Commit trace
+
+Every commit in `stage-1/` to `stage-4/` traces to a `git commit` tool call in `room.json`. The log holds exactly five such calls, all by `tk-implementer`; no other seat and no human ran `git commit`. Each hash first appears in the output of the implementer's own call. Times are the room log's `insertedAt` (UTC).
+
+| Stage | Hash | Room-log tool call (message index, UTC) | Hash first seen in output |
+|---|---|---|---|
+| 1 | `e17fe5b` | 149, 27 Sep 08:05:13 | 150, 08:05:16 |
+| 2 | `98d259b` | 427, 1 Oct 12:01:20 | 428, 12:01:22 |
+| 2 (fix) | `a13aa57` | 733, 1 Oct 12:38:59 | 734, 12:39:01 |
+| 3 | `411075a` | 1049, 1 Oct 17:13:02 | 1050, 17:13:04 |
+| 4 | `830e4d2` | 1375, 1 Oct 22:56:17 | 1376, 22:56:21 |
+
+Message indexes are positions in the `messages` array (0-based). The later commits (`460b1a6`, `99b3c13`, `f7e0e52`) add the mandates, a rename, and these docs; they touch nothing under `stage-N/`.
+
+To check it yourself, search `room.json` for `git commit` in `tool_call` messages.
