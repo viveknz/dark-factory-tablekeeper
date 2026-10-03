@@ -107,6 +107,16 @@ docker run --rm -v "$(pwd):/src" -w /src golang:1.23-alpine go test ./...
 docker run --rm -v "$(pwd):/src" -w /src golang:1.23 sh -c "CGO_ENABLED=1 go test -race ./..."
 ```
 
+One test, `TestImportAcceptsRealStage1Export`, builds and runs the actual accepted stage-1
+binary as a subprocess to verify a real (not hand-built) stage-1 export imports and replays
+correctly. It needs the sibling `stage-1/` folder visible, so mount the repo root instead of
+just this folder to exercise it; it skips cleanly (not fails) otherwise:
+
+```sh
+docker run --rm -v "$(dirname $(pwd)):/src" -w /src/stage-2 golang:1.23-alpine \
+  go test ./... -run TestImportAcceptsRealStage1Export -v
+```
+
 (or install Go 1.23+ locally and run the same `go vet`/`go test` commands directly from this
 folder).
 
