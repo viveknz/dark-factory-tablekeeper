@@ -118,10 +118,7 @@ Nothing below 4. The earlier screens keep their stage-3 scores.
 Everything in the earlier "not checked" sections still stands (no real assistive technology,
 Chromium only, no physical touch device). In addition:
 
-- **No daylight-saving boundary was exercised.** The offset is resolved per end, so a closure
-  straddling a transition should be right at both ends, and the single-offset case is verified at
-  the wire against the API's own offset — but I did not construct a closure spanning an actual DST
-  change and confirm it. This is the thinnest-tested part of the new screen.
+- ~~No daylight-saving boundary was exercised.~~ **Now verified** — see "Closing my own gap" below.
 - **`planning_limit` (422) and `plan_already_applied` (409) have handlers and copy but were never
   triggered.** The demo data has four tables and a handful of bookings, well inside the limits, and
   the apply path mints a fresh idempotency key each time. The other states — refused, no feasible
@@ -131,6 +128,36 @@ Chromium only, no physical touch device). In addition:
   browser. No screen is required for it and the dispatch did not ask for one.
 - The applied table's "tables before" column is **absent by necessity**, not by choice: the API
   does not let a manager read another diner's reservation.
+
+## Closing my own gap: the DST-spanning closure
+
+I handed off with the daylight-saving case flagged as the thinnest-tested part of the new screen.
+Rather than leave a known gap for the reviewer to find, I built the test (`dst.py`). **22 checks,
+all passing.**
+
+The browser is deliberately run in `America/New_York` — a zone that is neither the restaurant's nor
+UTC — so a build that used the browser's own offset would be visibly wrong rather than accidentally
+right.
+
+Australia/Melbourne, the demo restaurants' zone:
+
+| Closure (local wall clock) | `from` | `to` | Real elapsed |
+|---|---|---|---|
+| 2027-04-04 00:00 → 06:00, DST **ends** | `+11:00` | `+10:00` | **7h**, not the 6h on the clock |
+| 2027-10-03 00:00 → 06:00, DST **starts** | `+10:00` | `+11:00` | **5h**, not the 6h on the clock |
+| 2027-06-15 18:00 → 23:00, control (winter) | `+10:00` | `+10:00` | 5h |
+| 2027-01-15 18:00 → 23:00, control (summer) | `+11:00` | `+11:00` | 5h |
+
+Each end carries its own offset, the wall-clock times are exactly what was typed, and the server
+accepts all four intervals (201). The two controls matter as much as the transitions: they confirm
+the per-end resolution does not invent a difference where there is none.
+
+The run also exercised a state the demo data had not reached — a closure overlapping no booking at
+all — which renders "Nothing is affected" rather than an empty card.
+
+**Still not verified after this:** `planning_limit` and `plan_already_applied` (handlers and copy
+exist, the demo data never reaches them), recurring-series amendment (no UI by design), real
+assistive technology, non-Chromium browsers, and physical touch devices.
 
 ---
 
