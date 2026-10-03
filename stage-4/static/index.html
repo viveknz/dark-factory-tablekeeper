@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tablekeeper — Find a table. Keep it held.</title>
+<meta name="description" content="Tablekeeper holds a restaurant table for you. Pick a night, choose a table, keep it held.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/static/assets/brand/tablekeeper-icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/assets/brand/tablekeeper-icon.svg">
+<link rel="stylesheet" href="/static/app.css">
+<script>
+/* Theme before first paint: remembered choice, else the system preference. No flash. */
+(function () {
+  try {
+    var t = localStorage.getItem('tk-theme');
+    if (t !== 'light' && t !== 'dark') {
+      t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {
+    document.documentElement.setAttribute('data-theme', 'light');
+  }
+})();
+</script>
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- ============================================================ top bar -->
+<header class="topbar">
+  <div class="container topbar-in">
+    <a class="brand" href="/">
+      <img src="/static/assets/brand/tablekeeper-icon.svg" alt="" width="32" height="32">
+      <span>Tablekeeper</span>
+    </a>
+
+    <nav class="nav" aria-label="Main">
+      <a href="/" data-nav="/">Find a table</a>
+      <a href="/lookup" data-nav="/lookup">Reservation lookup</a>
+    </nav>
+
+    <div class="bar-auth" data-bar-auth>
+      <!-- filled by app.js: either "Signed in as NAME" + Sign out, or Sign in + Create account -->
+      <div class="bar-slot" data-bar-auth-slot></div>
+      <button class="btn-icon" type="button" data-theme-toggle aria-pressed="false">
+        <span class="sr-only" data-theme-label>Switch to dark theme</span>
+        <svg data-icon-moon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M19 15.5A8 8 0 0 1 8.5 5a7.5 7.5 0 1 0 10.5 10.5z"/>
+        </svg>
+        <svg data-icon-sun viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 3v2M12 19v2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M3 12h2M19 12h2M5.6 18.4 7 17M17 7l1.4-1.4"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+
+<!-- ============================================================ home / -->
+<section data-screen="home" hidden>
+  <div class="container">
+
+    <!-- hero -->
+    <div class="hero" data-home-top>
+      <div class="hero-copy">
+        <p class="eyebrow">Restaurant reservations</p>
+        <h1><span class="l">Find a table.</span><span class="l">Keep it held.</span></h1>
+        <p class="hero-sub">Pick a night, choose a table and we will hold it for you. Two minutes, no phone call.</p>
+      </div>
+      <div class="hero-art">
+        <img src="/static/assets/illustrations/undraw_eating-together_mr7m.svg" alt=""
+             width="300" height="300">
+      </div>
+    </div>
+
+    <!-- search -->
+    <form class="card search-card" data-search-form novalidate>
+      <div class="search-head">
+        <p class="eyebrow">Start with the details</p>
+        <h2>Search a night</h2>
+      </div>
+
+      <div class="search-row">
+        <div class="field">
+          <label for="f-restaurant">Restaurant</label>
+          <select class="input" id="f-restaurant" data-testid="restaurant-select" required></select>
+        </div>
+        <div class="field">
+          <label for="f-date">Date</label>
+          <input class="input" id="f-date" data-testid="date-input" type="date" required>
+        </div>
+        <div class="field">
+          <label for="f-party">Party size</label>
+          <input class="input" id="f-party" data-testid="party-size-input" type="number"
+                 min="1" max="99" step="1" value="2" inputmode="numeric" required>
+        </div>
+        <div class="search-go">
+          <button class="btn btn-primary btn-block" type="submit" data-testid="search-button">Find tables</button>
+        </div>
+      </div>
+
+      <div class="hours" data-hours hidden>
+        <div class="hours-label">
+          <span class="t">Open this week</span>
+          <span class="z" data-hours-zone></span>
+        </div>
+        <ul class="hours-days" data-hours-days></ul>
+      </div>
+    </form>
+
+    <!-- results + review -->
+    <div class="work" data-work hidden>
+      <section class="card results" data-results aria-labelledby="results-title">
+        <div class="results-head">
+          <img src="/static/assets/illustrations/undraw_booking_8vl5.svg" alt="" width="72" height="72">
+          <div>
+            <h2 id="results-title" data-results-title>Choose a time</h2>
+            <p class="sub" data-results-sub></p>
+          </div>
+        </div>
+
+        <ul class="legend" data-legend hidden>
+          <li><span class="swatch" aria-hidden="true"></span> Available</li>
+          <li><span class="swatch swatch-chosen" aria-hidden="true"></span> Your choice</li>
+          <!-- "Unavailable", not the reference's "Taken": from stage 3 a row can be hatched
+               because the table is too small for the party, which is not the same as taken,
+               and the row itself says which. -->
+          <li><span class="swatch swatch-taken" aria-hidden="true"></span> Unavailable</li>
+        </ul>
+
+        <div data-results-body></div>
+      </section>
+
+      <aside class="card review" data-review aria-labelledby="review-title">
+        <div class="review-head">
+          <p class="eyebrow">Your reservation</p>
+          <h2 id="review-title">Review and confirm</h2>
+        </div>
+        <div data-review-body></div>
+      </aside>
+    </div>
+
+    <!-- first run: no restaurants at all -->
+    <div class="card panel-empty first-run" data-first-run hidden>
+      <img src="/static/assets/illustrations/undraw_no-data_ig65.svg"
+           alt="An empty board with nothing pinned to it" width="200" height="160">
+      <h2>No restaurants yet</h2>
+      <p>
+        Tablekeeper shows the restaurants an operator has set up, and this service started empty.
+        Nothing is wrong — there is simply nothing to book until a restaurant, its tables and its
+        opening hours are loaded in.
+      </p>
+      <p>
+        The demo instructions are in the <code>demo/DEMO.md</code> file in this project. It has the
+        exact commands to load two restaurants with real opening hours and tables, both demo
+        sign-ins, and a combined-table booking to look at. Load it, then come back to this page and
+        press <strong>Find tables</strong>.
+      </p>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============================================================ /login -->
+<section data-screen="login" hidden>
+  <div class="container auth-wrap">
+    <div class="auth-art">
+      <img src="/static/assets/illustrations/undraw_login_weas.svg" alt="" width="380" height="340">
+    </div>
+    <div class="card auth-card">
+      <div class="auth-head">
+        <p class="eyebrow">Welcome back</p>
+        <h1>Sign in</h1>
+        <p>Sign in to hold your table. Your chosen time is kept.</p>
+      </div>
+      <div data-login-error></div>
+      <form class="auth-form" data-login-form novalidate>
+        <div class="field">
+          <label for="login-email">Email</label>
+          <input class="input" id="login-email" data-testid="login-email" type="email"
+                 autocomplete="email" placeholder="you@example.com" required>
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input class="input" id="login-password" data-testid="login-password" type="password"
+                 autocomplete="current-password" placeholder="Your password" required>
+        </div>
+        <button class="btn btn-primary btn-block" type="submit" data-testid="login-submit">Sign in</button>
+      </form>
+      <p class="auth-foot">New here? <a class="link" href="/signup" data-keep-next>Create an account</a></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ /signup -->
+<section data-screen="signup" hidden>
+  <div class="container auth-wrap">
+    <div class="auth-art">
+      <img src="/static/assets/illustrations/undraw_login_weas.svg" alt="" width="380" height="340">
+    </div>
+    <div class="card auth-card">
+      <div class="auth-head">
+        <p class="eyebrow">First time here</p>
+        <h1>Create your account</h1>
+        <p>One account holds your tables and lets you change or cancel them later.</p>
+      </div>
+      <div data-signup-error></div>
+      <form class="auth-form" data-signup-form novalidate>
+        <div class="field">
+          <label for="signup-display-name">Name</label>
+          <input class="input" id="signup-display-name" data-testid="signup-display-name" type="text"
+                 autocomplete="name" placeholder="The name on the booking" required>
+        </div>
+        <div class="field">
+          <label for="signup-email">Email</label>
+          <input class="input" id="signup-email" data-testid="signup-email" type="email"
+                 autocomplete="email" placeholder="you@example.com" required>
+        </div>
+        <div class="field">
+          <label for="signup-password">Password</label>
+          <input class="input" id="signup-password" data-testid="signup-password" type="password"
+                 autocomplete="new-password" placeholder="At least 8 characters" required>
+          <p class="field-help" id="signup-password-help">At least 8 characters.</p>
+        </div>
+        <button class="btn btn-primary btn-block" type="submit" data-testid="signup-submit">Create account</button>
+      </form>
+      <p class="auth-foot">Already have an account? <a class="link" href="/login" data-keep-next>Sign in</a></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ /lookup -->
+<section data-screen="lookup" hidden>
+  <div class="container lookup-wrap">
+    <div class="lookup-head">
+      <p class="eyebrow">Reservation lookup</p>
+      <h1>Find a booking</h1>
+      <p>Enter the reference from your confirmation to see the booking, change your mind, or cancel it.</p>
+    </div>
+
+    <form class="card lookup-card" data-lookup-form novalidate>
+      <div class="lookup-row">
+        <div class="field">
+          <label for="lookup-reference-input">Booking reference</label>
+          <input class="input" id="lookup-reference-input" data-testid="lookup-reference-input"
+                 type="text" autocomplete="off" spellcheck="false" placeholder="The code on your confirmation" required>
+        </div>
+        <button class="btn btn-primary" type="submit" data-testid="lookup-submit">Find reservation</button>
+      </div>
+    </form>
+
+    <div data-lookup-body></div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="container">
+    <p>Tablekeeper — find a table, keep it held.</p>
+    <p>Artwork by unDraw, used under its licence. See <code>static/assets/NOTICE.md</code>.</p>
+  </div>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

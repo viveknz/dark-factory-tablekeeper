@@ -1,0 +1,531 @@
+package store
+
+import (
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+// Store holds all service state behind a single mutex. Every state-changing handler, and
+// every handler whose correctness depends on a consistent snapshot, takes the lock for its
+// whole critical section. This also gives idempotency and booking-overlap checks atomicity
+// under concurrent requests for free.
+type Store struct {
+	mu sync.Mutex
+
+	Users        map[string]*User // by id
+	usersByEmail map[string]*User
+	Tokens       map[string]string // token -> user id
+
+	Restaurants     map[string]*Restaurant
+	restaurantOrder []string
+
+	Reservations           map[string]*Reservation // by id
+	reservationByReference map[string]*Reservation
+
+	Idempotency map[string]*IdempotencyRecord // see idempotencyKey()
+
+	Series map[string]*Series // by series id
+
+	Plans map[string]*Plan // by plan id
+}
+
+// HashPassword hashes a password with bcrypt. Passwords are truncated to bcrypt's 72-byte
+// limit before hashing so no valid request can ever hit bcrypt's ErrPasswordTooLong (the
+// service must never return 5xx).
+func HashPassword(password string) ([]byte, error) {
+	b := []byte(password)
+	if len(b) > 72 {
+		b = b[:72]
+	}
+	return bcrypt.GenerateFromPassword(b, bcrypt.DefaultCost)
+}
+
+// CheckPassword reports whether password matches hash, applying the same 72-byte truncation
+// used by HashPassword.
+func CheckPassword(hash []byte, password string) bool {
+	b := []byte(password)
+	if len(b) > 72 {
+		b = b[:72]
+	}
+	return bcrypt.CompareHashAndPassword(hash, b) == nil
+}
+
+func New() *Store {
+	s := &Store{}
+	s.resetLocked(Fixture{})
+	return s
+}
+
+// Lock/Unlock expose the single store mutex to handlers that need an atomic critical section
+// spanning multiple store operations (e.g. check-then-write).
+func (s *Store) Lock()   { s.mu.Lock() }
+func (s *Store) Unlock() { s.mu.Unlock() }
+
+// Fixture is the shape accepted by POST /_test/reset, matching spec §4.
+type Fixture struct {
+	Users       []FixtureUser       `json:"users"`
+	Restaurants []FixtureRestaurant `json:"restaurants"`
+	Reservations []FixtureReservation `json:"reservations"`
+}
+
+type FixtureUser struct {
+	ID          string `json:"id"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	DisplayName string `json:"display_name"`
+}
+
+type FixtureRestaurant struct {
+	ID                         string        `json:"id"`
+	Name                       string        `json:"name"`
+	Timezone                   string        `json:"timezone"`
+	SlotMinutes                int           `json:"slot_minutes"`
+	ReservationDurationMinutes int           `json:"reservation_duration_minutes"`
+	CancellationCutoffMinutes  int           `json:"cancellation_cutoff_minutes"`
+	OpeningHours               []OpeningHour `json:"opening_hours"`
+	Tables                     []Table       `json:"tables"`
+	Combinable                 [][]string    `json:"combinable"`
+	ManagerUserIDs             []string      `json:"manager_user_ids"`
+}
+
+// FixtureReservation may specify either a single table_id or a set of table_ids, and an
+// optional status ("confirmed" is the default; "cancelled" is accepted).
+type FixtureReservation struct {
+	ID            string   `json:"id"`
+	Reference     string   `json:"reference"`
+	UserID        string   `json:"user_id"`
+	RestaurantID  string   `json:"restaurant_id"`
+	TableID       string   `json:"table_id"`
+	TableIDs      []string `json:"table_ids"`
+	PartySize     int      `json:"party_size"`
+	StartsAtLocal string   `json:"starts_at_local"`
+	Status        string   `json:"status"`
+}
+
+// ResolvedTableIDs returns table_ids if given, else a single-element set from table_id.
+func (fr FixtureReservation) ResolvedTableIDs() []string {
+	if len(fr.TableIDs) > 0 {
+		return fr.TableIDs
+	}
+	if fr.TableID != "" {
+		return []string{fr.TableID}
+	}
+	return nil
+}
+
+// ResetAndSeed replaces all state with the given fixture, then uses buildReservation to turn
+// each seeded reservation entry into a store Reservation (resolving its local time against
+// the restaurant's timezone is the caller's job, since that logic lives in timeutil). The
+// whole operation is atomic under the store lock.
+func (s *Store) ResetAndSeed(f Fixture, buildReservation func(FixtureReservation) (*Reservation, error)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.resetLocked(f); err != nil {
+		return err
+	}
+	for _, fr := range f.Reservations {
+		r, err := buildReservation(fr)
+		if err != nil {
+			return err
+		}
+		s.Reservations[r.ID] = r
+		s.reservationByReference[r.Reference] = r
+	}
+	return nil
+}
+
+func (s *Store) resetLocked(f Fixture) error {
+	s.Users = map[string]*User{}
+	s.usersByEmail = map[string]*User{}
+	s.Tokens = map[string]string{}
+	s.Restaurants = map[string]*Restaurant{}
+	s.restaurantOrder = nil
+	s.Reservations = map[string]*Reservation{}
+	s.reservationByReference = map[string]*Reservation{}
+	s.Idempotency = map[string]*IdempotencyRecord{}
+	s.Series = map[string]*Series{}
+	s.Plans = map[string]*Plan{}
+
+	for _, fu := range f.Users {
+		hash, err := HashPassword(fu.Password)
+		if err != nil {
+			return fmt.Errorf("hash password for %s: %w", fu.ID, err)
+		}
+		u := &User{ID: fu.ID, Email: fu.Email, PasswordHash: hash, DisplayName: fu.DisplayName}
+		s.Users[u.ID] = u
+		s.usersByEmail[u.Email] = u
+	}
+
+	for _, fr := range f.Restaurants {
+		r := &Restaurant{
+			ID:                         fr.ID,
+			Name:                       fr.Name,
+			Timezone:                   fr.Timezone,
+			SlotMinutes:                fr.SlotMinutes,
+			ReservationDurationMinutes: fr.ReservationDurationMinutes,
+			CancellationCutoffMinutes:  fr.CancellationCutoffMinutes,
+			OpeningHours:               fr.OpeningHours,
+			Tables:                     fr.Tables,
+			Combinable:                 fr.Combinable,
+			ManagerUserIDs:             fr.ManagerUserIDs,
+		}
+		if r.ManagerUserIDs == nil {
+			r.ManagerUserIDs = []string{}
+		}
+		s.Restaurants[r.ID] = r
+		s.restaurantOrder = append(s.restaurantOrder, r.ID)
+	}
+
+	return nil
+}
+
+func (s *Store) UserByEmail(email string) (*User, bool) {
+	u, ok := s.usersByEmail[email]
+	return u, ok
+}
+
+func (s *Store) UserByToken(token string) (*User, bool) {
+	uid, ok := s.Tokens[token]
+	if !ok {
+		return nil, false
+	}
+	u, ok := s.Users[uid]
+	return u, ok
+}
+
+func (s *Store) AddUser(u *User) {
+	s.Users[u.ID] = u
+	s.usersByEmail[u.Email] = u
+}
+
+func (s *Store) AddToken(token, userID string) {
+	s.Tokens[token] = userID
+}
+
+func (s *Store) RestaurantsInOrder() []*Restaurant {
+	out := make([]*Restaurant, 0, len(s.restaurantOrder))
+	for _, id := range s.restaurantOrder {
+		out = append(out, s.Restaurants[id])
+	}
+	return out
+}
+
+func (s *Store) AddRestaurant(r *Restaurant) {
+	if _, exists := s.Restaurants[r.ID]; !exists {
+		s.restaurantOrder = append(s.restaurantOrder, r.ID)
+	}
+	s.Restaurants[r.ID] = r
+}
+
+func (s *Store) AddReservation(r *Reservation) {
+	s.Reservations[r.ID] = r
+	s.reservationByReference[r.Reference] = r
+}
+
+func (s *Store) ReservationByReference(ref string) (*Reservation, bool) {
+	r, ok := s.reservationByReference[ref]
+	return r, ok
+}
+
+func (s *Store) ReferenceTaken(ref string) bool {
+	_, ok := s.reservationByReference[ref]
+	return ok
+}
+
+func (s *Store) ReservationsByUser(userID string) []*Reservation {
+	out := []*Reservation{}
+	for _, r := range s.Reservations {
+		if r.UserID == userID {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// TableAvailable reports whether tableID has no overlapping confirmed reservation in
+// [start,end) (checking every reservation that occupies tableID among its one or two
+// tables), ignoring the reservation given in ignoreID if any (used by amendments, which
+// recheck availability for their own booking).
+func (s *Store) TableAvailable(restaurantID, tableID string, start, end time.Time, ignoreID string) bool {
+	if rest, ok := s.Restaurants[restaurantID]; ok {
+		for _, c := range rest.Closures {
+			if c.TableID == tableID && c.Overlaps(start, end) {
+				return false
+			}
+		}
+	}
+	for _, r := range s.Reservations {
+		if r.ID == ignoreID {
+			continue
+		}
+		if r.Status != "confirmed" {
+			continue
+		}
+		if r.RestaurantID != restaurantID || !r.HasTable(tableID) {
+			continue
+		}
+		if r.Overlaps(start, end) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Store) PlanByID(id string) (*Plan, bool) {
+	p, ok := s.Plans[id]
+	return p, ok
+}
+
+func (s *Store) AddPlan(p *Plan) {
+	s.Plans[p.ID] = p
+}
+
+// PublishPolicy appends p (with PolicyVersion set to len(Policies)+1) to r.Policies and
+// returns the assigned version. Only called after validation has already succeeded, since
+// policy publication never allocates a version on failure.
+func (r *Restaurant) PublishPolicy(p Policy) int {
+	p.PolicyVersion = len(r.Policies) + 1
+	r.Policies = append(r.Policies, p)
+	return p.PolicyVersion
+}
+
+// PublishedPolicies returns policies in publication order (the order they were appended, which
+// may differ from effective-date order), omitting the implicit policy 0.
+func (r *Restaurant) PublishedPolicies() []Policy {
+	out := make([]Policy, len(r.Policies))
+	copy(out, r.Policies)
+	return out
+}
+
+func (s *Store) SeriesByID(id string) (*Series, bool) {
+	sr, ok := s.Series[id]
+	return sr, ok
+}
+
+func (s *Store) AddSeries(sr *Series) {
+	s.Series[sr.ID] = sr
+}
+
+func idempotencyKey(userID, method, path, key string) string {
+	return userID + "\x00" + method + "\x00" + path + "\x00" + key
+}
+
+func (s *Store) IdempotencyGet(userID, method, path, key string) (*IdempotencyRecord, bool) {
+	rec, ok := s.Idempotency[idempotencyKey(userID, method, path, key)]
+	return rec, ok
+}
+
+func (s *Store) IdempotencyPut(userID, method, path, key string, rec *IdempotencyRecord) {
+	s.Idempotency[idempotencyKey(userID, method, path, key)] = rec
+}
+
+// ExportState is the opaque snapshot shape returned by export and accepted by import.
+type ExportState struct {
+	Users        map[string]*User              `json:"users"`
+	Tokens       map[string]string              `json:"tokens"`
+	Restaurants  map[string]*Restaurant         `json:"restaurants"`
+	RestOrder    []string                       `json:"restaurant_order"`
+	Reservations map[string]*Reservation        `json:"reservations"`
+	Idempotency  map[string]*IdempotencyRecord `json:"idempotency"`
+	Series       map[string]*Series             `json:"series"`
+	Plans        map[string]*Plan               `json:"plans"`
+}
+
+func (s *Store) ExportLocked() ExportState {
+	return ExportState{
+		Users:        s.Users,
+		Tokens:       s.Tokens,
+		Restaurants:  s.Restaurants,
+		RestOrder:    s.restaurantOrder,
+		Reservations: s.Reservations,
+		Idempotency:  s.Idempotency,
+		Series:       s.Series,
+		Plans:        s.Plans,
+	}
+}
+
+func (s *Store) ImportLocked(st ExportState) {
+	s.Users = st.Users
+	if s.Users == nil {
+		s.Users = map[string]*User{}
+	}
+	s.usersByEmail = map[string]*User{}
+	for _, u := range s.Users {
+		s.usersByEmail[u.Email] = u
+	}
+	s.Tokens = st.Tokens
+	if s.Tokens == nil {
+		s.Tokens = map[string]string{}
+	}
+	s.Restaurants = st.Restaurants
+	if s.Restaurants == nil {
+		s.Restaurants = map[string]*Restaurant{}
+	}
+	s.restaurantOrder = st.RestOrder
+	s.Reservations = st.Reservations
+	if s.Reservations == nil {
+		s.Reservations = map[string]*Reservation{}
+	}
+	s.reservationByReference = map[string]*Reservation{}
+	for _, r := range s.Reservations {
+		s.reservationByReference[r.Reference] = r
+	}
+	s.Idempotency = st.Idempotency
+	if s.Idempotency == nil {
+		s.Idempotency = map[string]*IdempotencyRecord{}
+	}
+	for _, rec := range s.Idempotency {
+		rec.ResponseBody = upgradeLegacyResponseBody(rec.ResponseBody, s.Restaurants)
+	}
+	s.Series = st.Series
+	if s.Series == nil {
+		s.Series = map[string]*Series{}
+	}
+	s.Plans = st.Plans
+	if s.Plans == nil {
+		s.Plans = map[string]*Plan{}
+	}
+	for _, r := range s.Restaurants {
+		if r.ManagerUserIDs == nil {
+			r.ManagerUserIDs = []string{}
+		}
+	}
+	// A reservation imported from a stage-1/stage-2 export predates revision/accepted_terms/
+	// history entirely (Revision unmarshals to the zero value). Per "Existing clients after an
+	// upgrade", such a reservation must work going forward: give it revision 1 under its
+	// restaurant's policy 0 (the only policy stage-1/2 ever had) and a synthetic "created"
+	// history entry, exactly as if it had been booked under policy 0 to begin with.
+	for _, r := range s.Reservations {
+		if r.Revision != 0 {
+			continue
+		}
+		r.Revision = 1
+		if rest, ok := s.Restaurants[r.RestaurantID]; ok {
+			r.AcceptedTerms = rest.Policy0()
+		}
+		r.History = nil
+		r.RecordCreated(r.CreatedAt)
+	}
+}
+
+// upgradeLegacyResponseBody reshapes a frozen idempotency response body that predates
+// combined tables (a stage-1 export's singular "table_id", no "table_ids") into this stage's
+// shape, so a lost-response retry replayed after import still returns a response that "always
+// carries table_ids" per spec, not the pre-stage-2 shape it was frozen in. Replaying must still
+// return the ORIGINAL booking's identity/fields unchanged -- only the table_id/table_ids
+// envelope is widened; everything else in the body is untouched. Handles both a single
+// reservation body and a POST /reservation-moves body (a "reservations" array). Returns body
+// unchanged if it does not look like either shape.
+func upgradeLegacyResponseBody(body string, restaurants map[string]*Restaurant) string {
+	var generic map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &generic); err != nil {
+		return body
+	}
+	if listRaw, ok := generic["reservations"]; ok {
+		var list []map[string]json.RawMessage
+		if err := json.Unmarshal(listRaw, &list); err != nil {
+			return body
+		}
+		changed := false
+		for i, item := range list {
+			c1 := upgradeTableIDsField(item)
+			c2 := upgradeRevisionTermsFields(item, restaurants)
+			if c1 || c2 {
+				list[i] = item
+				changed = true
+			}
+		}
+		if !changed {
+			return body
+		}
+		newList, err := json.Marshal(list)
+		if err != nil {
+			return body
+		}
+		generic["reservations"] = newList
+		out, err := json.Marshal(generic)
+		if err != nil {
+			return body
+		}
+		return string(out)
+	}
+	c1 := upgradeTableIDsField(generic)
+	c2 := upgradeRevisionTermsFields(generic, restaurants)
+	if !c1 && !c2 {
+		return body
+	}
+	out, err := json.Marshal(generic)
+	if err != nil {
+		return body
+	}
+	return string(out)
+}
+
+// upgradeRevisionTermsFields adds "revision":1 and "accepted_terms" (the restaurant's policy 0,
+// since stage-1/2 predate policies) to obj in place if it has no "revision" field but does name
+// a known restaurant_id, reporting whether it changed anything.
+func upgradeRevisionTermsFields(obj map[string]json.RawMessage, restaurants map[string]*Restaurant) bool {
+	if _, hasRevision := obj["revision"]; hasRevision {
+		return false
+	}
+	restIDRaw, ok := obj["restaurant_id"]
+	if !ok {
+		return false
+	}
+	var restID string
+	if err := json.Unmarshal(restIDRaw, &restID); err != nil {
+		return false
+	}
+	rest, ok := restaurants[restID]
+	if !ok {
+		return false
+	}
+	revJSON, err := json.Marshal(1)
+	if err != nil {
+		return false
+	}
+	termsJSON, err := json.Marshal(rest.Policy0())
+	if err != nil {
+		return false
+	}
+	obj["revision"] = revJSON
+	obj["accepted_terms"] = termsJSON
+	return true
+}
+
+// upgradeTableIDsField adds "table_ids":[table_id] to obj in place if it has a "table_id" but
+// no "table_ids" field, reporting whether it changed anything.
+func upgradeTableIDsField(obj map[string]json.RawMessage) bool {
+	if _, hasTableIDs := obj["table_ids"]; hasTableIDs {
+		return false
+	}
+	tableIDRaw, hasTableID := obj["table_id"]
+	if !hasTableID {
+		return false
+	}
+	var tableID string
+	if err := json.Unmarshal(tableIDRaw, &tableID); err != nil {
+		return false
+	}
+	idsJSON, err := json.Marshal([]string{tableID})
+	if err != nil {
+		return false
+	}
+	obj["table_ids"] = idsJSON
+	return true
+}
+
+// MarshalExport/UnmarshalExport let httpapi treat the state as an opaque JSON value.
+func MarshalExport(st ExportState) (json.RawMessage, error) {
+	return json.Marshal(st)
+}
+
+func UnmarshalExport(raw json.RawMessage) (ExportState, error) {
+	var st ExportState
+	err := json.Unmarshal(raw, &st)
+	return st, err
+}
