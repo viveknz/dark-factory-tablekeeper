@@ -48,7 +48,8 @@
     checkCircle: '<svg ' + SVG_ATTRS + '><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5 11 15l4.5-5"/></svg>',
     crossCircle: '<svg ' + SVG_ATTRS + '><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
     calendar: '<svg ' + SVG_ATTRS + '><rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M9 3.5v4M15 3.5v4"/></svg>',
-    search: '<svg ' + SVG_ATTRS + '><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l4.5 4.5"/></svg>'
+    search: '<svg ' + SVG_ATTRS + '><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l4.5 4.5"/></svg>',
+    arrowRight: '<svg ' + SVG_ATTRS + '><path d="M4.5 12h15"/><path d="M13 5.5 19.5 12 13 18.5"/></svg>'
   };
 
   var WEEKDAY_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -274,8 +275,11 @@
       barSlot.appendChild(h('a', { class: 'btn btn-secondary', href: signInHref(), text: 'Sign in' }));
       barSlot.appendChild(h('a', { class: 'btn btn-primary', href: signUpHref(), text: 'Create account' }));
     }
+    /* Shown to every signed-in user, never gated on a guessed role: the server decides who
+       may use it and answers a non-manager with a refusal the page then shows in plain words. */
+    show(q('[data-nav-recovery]'), !!session);
     qa('.nav a').forEach(function (a) {
-      if (a.getAttribute('data-nav') === route) a.setAttribute('aria-current', 'page');
+      if (a.getAttribute('data-nav-screen') === screenName) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
   }
@@ -283,8 +287,9 @@
   function signOut() {
     saveSession(null);
     renderTopBar();
-    if (route === '/') { home.onSignedOut(); }
-    else if (route === '/lookup') { lookup.reset(); }
+    if (screenName === 'home') { home.onSignedOut(); }
+    else if (screenName === 'lookup') { lookup.reset(); }
+    else if (screenName === 'recovery') { recovery.onSignedOut(); }
   }
 
   /* =============================================================== routing */
@@ -292,6 +297,12 @@
   var path = window.location.pathname.replace(/\/+$/, '') || '/';
   var route = (path === '/signup' || path === '/login' || path === '/lookup') ? path : '/';
   var params = new URLSearchParams(window.location.search);
+  /* Service recovery is one of the spec's "other screens", which must be reachable through the
+     UI rather than by its own URL, so it rides on / as a view rather than needing a new server
+     route. The four URL-addressable screens are unchanged. */
+  var screenName = route === '/' ? (params.get('view') === 'recovery' ? 'recovery' : 'home')
+                 : route === '/login' ? 'login'
+                 : route === '/signup' ? 'signup' : 'lookup';
 
   /* The chosen slot travels through sign-in as plain query parameters and nothing else, so a
      person who clicks an available time while signed out comes back to that same time. */
@@ -1442,13 +1453,437 @@
     return { start: start, reset: function () { current = null; if (body) clear(body); } };
   })();
 
+  /* =============================================================== service recovery */
+
+  var recovery = (function () {
+    var screenEl = q('[data-screen="recovery"]');
+    var form, selRest, selTable, inFromD, inFromT, inToD, inToT, zoneNote, body, submit;
+    var restaurants = [], detail = null, plan = null, busy = false;
+
+    /* ---- the restaurant's own clock, not the browser's -------------------------------
+       POST /replans takes explicit-offset instants. The manager types the restaurant's LOCAL
+       wall-clock time, so the offset has to be the one in force in the restaurant's zone on
+       that date - which is not the browser's offset, and is not even constant across the
+       closure if it straddles a daylight-saving change. Both ends are resolved separately. */
+    function zoneOffsetMinutes(timeZone, when) {
+      try {
+        var dtf = new Intl.DateTimeFormat('en-US', {
+          timeZone: timeZone, hour12: false,
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+        var p = {};
+        dtf.formatToParts(when).forEach(function (x) { p[x.type] = x.value; });
+        var asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, (+p.hour) % 24, +p.minute, +p.second);
+        return Math.round((asUTC - when.getTime()) / 60000);
+      } catch (e) {
+        return -when.getTimezoneOffset();   /* no Intl zone data: the browser's own offset */
+      }
+    }
+
+    /* a wall-clock time in the restaurant's zone -> that instant's explicit-offset string */
+    function localToInstant(timeZone, ymd, hhmm) {
+      var dp = ymdParts(ymd), tp = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
+      if (!dp || !tp) return null;
+      var wall = Date.UTC(dp.y, dp.m - 1, dp.d, +tp[1], +tp[2], 0);
+      var guess = wall, off = 0, i;
+      for (i = 0; i < 3; i++) {                  /* converges immediately; 3 is belt and braces */
+        off = zoneOffsetMinutes(timeZone, new Date(guess));
+        guess = wall - off * 60000;
+      }
+      var sign = off < 0 ? '-' : '+';
+      var a = Math.abs(off);
+      return ymd + 'T' + hhmm + ':00' + sign +
+             ('0' + Math.floor(a / 60)).slice(-2) + ':' + ('0' + (a % 60)).slice(-2);
+    }
+
+    function labelOf(id) {
+      var i;
+      for (i = 0; i < ((detail && detail.tables) || []).length; i++) {
+        if (detail.tables[i].id === id) return tableName(detail.tables[i].label);
+      }
+      return id;
+    }
+    function labelsOf(ids) { return (ids || []).map(labelOf).join(' + '); }
+
+    function setBody(nodes) {
+      clear(body);
+      (Array.isArray(nodes) ? nodes : [nodes]).forEach(function (x) { if (x) body.appendChild(x); });
+    }
+
+    /* ---- states ---------------------------------------------------------------------- */
+
+    function idle() {
+      setBody(h('div', { class: 'card plan-card' }, [
+        h('div', { class: 'idle-note' }, [
+          h('p', { html: ICON.search }),
+          h('p', { text: 'Choose the table and the hours it is out, then press Preview plan. ' +
+                         'We will show you who would move before anything changes.' })
+        ])
+      ]));
+    }
+
+    function loading() {
+      setBody(h('div', { class: 'card plan-card', role: 'status', 'aria-live': 'polite' }, [
+        h('span', { class: 'sr-only', text: 'Working out a seating plan\u2026' }),
+        h('div', { class: 'sk', style: 'height:26px;width:52%' }),
+        h('div', { class: 'sk', style: 'height:74px' }),
+        h('div', { class: 'sk', style: 'height:120px' })
+      ]));
+    }
+
+    function refusal(kind, title, lines, extra) {
+      setBody(h('div', { class: 'card plan-card' },
+        notice(kind, 'recovery-error', title,
+          (lines || []).map(function (t) { return h('p', { text: t }); }), extra)));
+    }
+
+    function planTable(rows, withDetail) {
+      var head = [h('th', { scope: 'col', text: 'Booking' })];
+      if (withDetail) {
+        head.push(h('th', { scope: 'col', text: 'Party' }));
+        head.push(h('th', { scope: 'col', text: 'Starts' }));
+      }
+      head.push(h('th', { scope: 'col', text: withDetail ? 'Seated at' : 'Would sit at' }));
+      head.push(h('th', { scope: 'col', text: 'Change' }));
+
+      var bodyRows = rows.map(function (r) {
+        var cells = [h('td', { class: 'bref', text: r.reference })];
+        if (withDetail) {
+          cells.push(h('td', { text: r.party_size ? guestsText(r.party_size) : '\u2014' }));
+          cells.push(h('td', { text: r.starts_at_local
+            ? fmtDateShort(dateOf(r.starts_at_local)) + ' at ' + hhmmOf(r.starts_at_local)
+            : '\u2014' }));
+        }
+        cells.push(h('td', { class: 'seat', text: labelsOf(r.table_ids) }));
+        cells.push(h('td', null, h('span', { class: 'tag', 'data-changed': r.changed ? 'true' : 'false' }, [
+          h('span', { html: r.changed ? ICON.arrowRight : ICON.check }),
+          r.changed ? (withDetail ? 'Moved' : 'Moves')
+                    : (withDetail ? 'Unchanged' : 'Stays')
+        ])));
+        return h('tr', null, cells);
+      });
+
+      return h('div', { class: 'plan-scroll', tabindex: '0', role: 'region',
+                        'aria-label': 'Proposed seating, scrolls sideways' },
+        h('table', { class: 'plan' }, [
+          h('thead', null, h('tr', null, head)),
+          h('tbody', null, bodyRows)
+        ]));
+    }
+
+    function closureWords(closure) {
+      /* read back the instants in the restaurant's own zone, so the summary speaks the same
+         clock the manager typed into the form */
+      function words(iso) {
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        try {
+          return new Intl.DateTimeFormat('en-GB', {
+            timeZone: detail.timezone, weekday: 'short', day: 'numeric', month: 'short',
+            hour: '2-digit', minute: '2-digit', hour12: false
+          }).format(d);
+        } catch (e) { return iso; }
+      }
+      return words(closure.from) + ' \u2192 ' + words(closure.to);
+    }
+
+    function previewed(p) {
+      plan = p;
+      var rows = (p.assignments || []).slice();
+      var nodes = [h('div', { class: 'card plan-card', 'data-testid': 'recovery-plan' }, [
+        h('div', { class: 'plan-head' }, [
+          h('p', { class: 'eyebrow', text: 'Proposed plan' }),
+          h('h2', { text: rows.length
+            ? (p.moved_count ? 'We can reseat everyone' : 'Nobody has to move')
+            : 'Nothing is affected' }),
+          h('p', { class: 'hold-note', text:
+            labelOf(p.closure.table_id) + ' out of use \u00b7 ' + closureWords(p.closure) +
+            ' \u00b7 ' + detail.timezone })
+        ]),
+        h('div', { class: 'plan-stats' }, [
+          h('div', { class: 'stat' }, [h('span', { class: 'k', text: 'Bookings affected' }),
+            h('span', { class: 'v', text: String(rows.length) })]),
+          h('div', { class: 'stat' }, [h('span', { class: 'k', text: 'Have to move' }),
+            h('span', { class: 'v', text: String(p.moved_count) })]),
+          h('div', { class: 'stat' }, [h('span', { class: 'k', text: 'Seats left spare' }),
+            h('span', { class: 'v', text: String(p.unused_seats) })])
+        ]),
+        rows.length ? planTable(rows, false)
+                    : h('p', { text: 'No booking overlaps those hours, so closing the table ' +
+                                     'changes nothing. You can apply it to record the closure.' }),
+        h('p', { class: 'hold-note', text:
+          'Everyone keeps their time, their party size and the terms they booked under. ' +
+          'Nothing has changed yet.' }),
+        h('div', { class: 'plan-actions' }, [
+          applyButton(),
+          startAgainButton()
+        ])
+      ])];
+      setBody(nodes);
+    }
+
+    function applyButton() {
+      var b = h('button', { class: 'btn btn-primary', type: 'button',
+                            'data-testid': 'recovery-apply',
+                            text: busy ? 'Applying\u2026' : 'Apply plan',
+                            'aria-busy': busy ? 'true' : null });
+      b.addEventListener('click', doApply);
+      return b;
+    }
+    function startAgainButton(label) {
+      var b = h('button', { class: 'btn btn-secondary', type: 'button',
+                            text: label || 'Start again' });
+      b.addEventListener('click', function () { plan = null; idle(); form.scrollIntoView({ block: 'start' }); });
+      return b;
+    }
+
+    function applied(res, assignments) {
+      var changedBy = {};
+      (assignments || []).forEach(function (a) { changedBy[a.reference] = a.changed; });
+      var rows = (res.reservations || []).map(function (r) {
+        return { reference: r.reference, party_size: r.party_size,
+                 starts_at_local: r.starts_at_local, table_ids: r.table_ids,
+                 changed: !!changedBy[r.reference] };
+      });
+      setBody(h('div', { class: 'card plan-card rise', 'data-testid': 'recovery-applied' }, [
+        h('div', { class: 'applied-head' }, [
+          h('p', { class: 'ok' }, [h('span', { html: ICON.checkCircle }), 'Plan applied']),
+        ]),
+        h('div', { class: 'plan-head' }, [
+          h('h2', { text: 'The table is closed and everyone is reseated' }),
+          h('p', { class: 'hold-note', text:
+            'These are the bookings as they now stand. Each guest keeps their time, party size ' +
+            'and terms. Their booking reference has not changed, so the one on their ' +
+            'confirmation still works.' })
+        ]),
+        rows.length ? planTable(rows, true)
+                    : h('p', { text: 'The closure is recorded. No booking needed moving.' }),
+        h('div', { class: 'plan-actions' }, [startAgainButton('Close another table')])
+      ]));
+    }
+
+    /* ---- actions --------------------------------------------------------------------- */
+
+    function fillTables() {
+      clear(selTable);
+      ((detail && detail.tables) || []).forEach(function (t) {
+        selTable.appendChild(h('option', { value: t.id, text: tableName(t.label) }));
+      });
+      zoneNote.textContent = detail
+        ? 'Times are the restaurant\u2019s own local time, in ' + detail.timezone + '.'
+        : '';
+    }
+
+    function loadDetail(id) {
+      return api('GET', '/restaurants/' + encodeURIComponent(id)).then(function (r) {
+        detail = (r.ok && r.data) ? r.data : null;
+        fillTables();
+      }, function () { detail = null; fillTables(); });
+    }
+
+    function doPreview() {
+      if (busy || !session || !detail) return;
+      var from = localToInstant(detail.timezone, inFromD.value, inFromT.value);
+      var to = localToInstant(detail.timezone, inToD.value, inToT.value);
+      if (!from || !to) {
+        refusal('danger', 'We need both ends of the closure.',
+          ['Fill in the date and time the table goes out of use, and when it is back.']);
+        return;
+      }
+      if (new Date(from).getTime() >= new Date(to).getTime()) {
+        refusal('danger', 'The end has to come after the start.',
+          ['Check the two dates and times \u2014 a closure cannot finish before it begins.']);
+        return;
+      }
+      busy = true;
+      plan = null;
+      loading();
+      api('POST', '/restaurants/' + encodeURIComponent(detail.id) + '/replans', {
+        body: { table_id: selTable.value, from: from, to: to },
+        token: session.token, idempotencyKey: newIdempotencyKey(), timeoutMs: LOST_RESPONSE_MS
+      }).then(function (r) {
+        busy = false;
+        if (r.ok && r.data && r.data.plan_id) { previewed(r.data); return; }
+        showFailure(r, 'preview');
+      }, function () {
+        busy = false;
+        refusal('warning', 'We did not hear back.',
+          ['Nothing has been closed and nothing has moved \u2014 a preview never changes ' +
+           'anything. Press Preview plan to try again.']);
+      });
+    }
+
+    function doApply() {
+      if (busy || !session || !detail || !plan) return;
+      busy = true;
+      var keep = plan;
+      /* the plan stays on screen while it applies; only the button changes */
+      var btn = q('[data-testid="recovery-apply"]');
+      if (btn) { btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Applying\u2026'; }
+      api('POST', '/restaurants/' + encodeURIComponent(detail.id) +
+                  '/replans/' + encodeURIComponent(keep.plan_id) + '/apply', {
+        body: {}, token: session.token,
+        idempotencyKey: newIdempotencyKey(), timeoutMs: LOST_RESPONSE_MS
+      }).then(function (r) {
+        busy = false;
+        if (r.ok && r.data && r.data.reservations) { applied(r.data, keep.assignments); return; }
+        showFailure(r, 'apply');
+      }, function () {
+        busy = false;
+        refusal('warning', 'We did not hear back.',
+          ['We cannot tell from here whether the plan went through. Press Preview plan again: ' +
+           'if the closure is already recorded, the new plan will show it.'],
+          h('div', { class: 'plan-actions' }, [startAgainButton('Preview again')]));
+      });
+    }
+
+    /* every state the server can answer with, in plain words and visibly distinct */
+    function showFailure(r, phase) {
+      var code = errCode(r);
+      if (r.status === 403 || code === 'forbidden') {
+        /* exact wording required by the brief; the server decided this, not the browser */
+        refusal('warning', 'This is for restaurant managers.',
+          ['Your account does not manage this restaurant, so it cannot close its tables. ' +
+           'If that looks wrong, the restaurant can add you.']);
+        return;
+      }
+      if (r.status === 401) {
+        saveSession(null);
+        renderTopBar();
+        signedOut();
+        return;
+      }
+      if (code === 'no_feasible_plan') {
+        refusal('danger', 'There is no way to reseat everyone.',
+          ['With that table out, somebody would have no table for their time and party size. ' +
+           'Nothing has changed. Try a shorter closure, or close it outside service.']);
+        return;
+      }
+      if (code === 'stale_plan') {
+        refusal('warning', 'This plan is out of date.',
+          ['Something else changed at the restaurant since we worked it out \u2014 a new ' +
+           'booking, a cancellation or another closure. Nothing has changed. Preview it again ' +
+           'and we will plan against how things stand now.'],
+          h('div', { class: 'plan-actions' }, [
+            (function () {
+              var b = h('button', { class: 'btn btn-primary', type: 'button', text: 'Preview again' });
+              b.addEventListener('click', doPreview);
+              return b;
+            })()
+          ]));
+        return;
+      }
+      if (code === 'plan_already_applied') {
+        refusal('warning', 'That plan has already been applied.',
+          ['The closure is recorded and the guests are reseated. Preview again if you need to ' +
+           'change something else.'],
+          h('div', { class: 'plan-actions' }, [startAgainButton('Start again')]));
+        return;
+      }
+      if (code === 'planning_limit') {
+        refusal('danger', 'That is too much to replan at once.',
+          ['Too many tables or bookings fall in those hours for us to work through. Nothing has ' +
+           'changed. Close the table for a shorter stretch and repeat if you need to.']);
+        return;
+      }
+      if (code === 'table_unavailable') {
+        refusal('danger', 'That table is already closed for part of those hours.',
+          ['Nothing has changed. Preview a window that does not overlap a closure you have ' +
+           'already applied.']);
+        return;
+      }
+      if (r.status === 404) {
+        refusal('danger', phase === 'apply' ? 'We could not find that plan any more.'
+                                            : 'We could not find that table.',
+          [phase === 'apply'
+            ? 'Preview the closure again and apply the fresh plan.'
+            : 'Pick a table from the list and preview again.']);
+        return;
+      }
+      refusal('danger', 'We could not work out a plan.',
+        [errMessage(r) || 'Nothing has changed. Check the hours above and try again.']);
+    }
+
+    function signedOut() {
+      setBody(h('div', { class: 'card plan-card' }, [
+        h('div', { class: 'plan-head' }, [
+          h('h2', { text: 'Sign in to close a table' }),
+          h('p', { class: 'hold-note', text:
+            'Service recovery changes real bookings, so we need to know who you are. The ' +
+            'restaurant decides who may use it.' })
+        ]),
+        h('div', { class: 'plan-actions' }, [
+          h('a', { class: 'btn btn-primary', href: '/login?next=' +
+            encodeURIComponent('/?view=recovery'), text: 'Sign in' })
+        ])
+      ]));
+      show(form, false);
+    }
+
+    function start() {
+      show(screenEl, true);
+      form = q('[data-recovery-form]', screenEl);
+      selRest = q('[data-testid="recovery-restaurant"]', screenEl);
+      selTable = q('[data-testid="recovery-table"]', screenEl);
+      inFromD = q('[data-testid="recovery-from-date"]', screenEl);
+      inFromT = q('[data-testid="recovery-from-time"]', screenEl);
+      inToD = q('[data-testid="recovery-to-date"]', screenEl);
+      inToT = q('[data-testid="recovery-to-time"]', screenEl);
+      zoneNote = q('[data-recovery-zone]', screenEl);
+      submit = q('[data-testid="recovery-preview"]', screenEl);
+      body = q('[data-recovery-body]', screenEl);
+
+      if (!session) { signedOut(); return; }
+
+      var today = todayYMD();
+      inFromD.value = today; inToD.value = today;
+      inFromT.value = '17:00'; inToT.value = '23:00';
+
+      form.addEventListener('submit', function (e) { e.preventDefault(); doPreview(); });
+      selRest.addEventListener('change', function () {
+        plan = null;
+        loadDetail(selRest.value).then(idle);
+      });
+
+      api('GET', '/restaurants').then(function (r) {
+        restaurants = (r.ok && r.data && r.data.restaurants) || [];
+        clear(selRest);
+        restaurants.forEach(function (rr) {
+          selRest.appendChild(h('option', { value: rr.id, text: rr.name }));
+        });
+        if (!restaurants.length) {
+          show(form, false);
+          setBody(h('div', { class: 'card panel-empty' }, [
+            h('img', { src: '/static/assets/illustrations/undraw_no-data_ig65.svg',
+                       alt: 'An empty board with nothing pinned to it', width: '200', height: '160' }),
+            h('h2', { text: 'No restaurants yet' }),
+            h('p', { text: 'There is nothing to close until a restaurant is set up. The demo ' +
+                           'instructions are in the demo/DEMO.md file in this project.' })
+          ]));
+          return;
+        }
+        loadDetail(selRest.value).then(idle);
+      }, function () {
+        refusal('danger', 'We could not load the restaurants.',
+          ['Press Preview plan to try again.']);
+      });
+    }
+
+    return {
+      start: start,
+      onSignedOut: function () { plan = null; signedOut(); }
+    };
+  })();
+
   /* =============================================================== boot */
 
   renderTopBar();
 
-  if (route === '/') home.start();
-  else if (route === '/login') authScreen('login');
-  else if (route === '/signup') authScreen('signup');
-  else if (route === '/lookup') lookup.start();
+  if (screenName === 'recovery') recovery.start();
+  else if (screenName === 'home') home.start();
+  else if (screenName === 'login') authScreen('login');
+  else if (screenName === 'signup') authScreen('signup');
+  else if (screenName === 'lookup') lookup.start();
 
 })();

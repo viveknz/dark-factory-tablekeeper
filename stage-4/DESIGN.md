@@ -5,7 +5,11 @@ Written by `df-frontend` before any screen code, per the frontend mandate. The s
 (`C:\Users\vivek\df-inputs\reference\`). Where my taste and the brief differ, the brief wins. Where
 the brief and the official stage-2 spec differ, the spec wins (the brief says so itself).
 
-Stage 4+ should start from this file and extend it rather than restating it.
+A later stage should start from this file and extend it rather than restating it.
+
+> **Stage 4 (this stage).** The visual system is unchanged. Two additions, both in section 11 at
+> the end: the top bar gains **Service recovery** for signed-in users, and there is one new screen
+> behind it. One wording change: a slot that is unavailable no longer says "already booked".
 
 > **Stage 3 (this stage).** No new screens; the visual system, type scale, spacing, colour roles
 > and every screen layout below are unchanged and were re-verified against the stage-3 service.
@@ -436,3 +440,94 @@ stating something false. This is the only wording in the build that departs from
   `effective_from`, `capacities`, `series_id`, nor any raw rule name. Verified against the
   rendered DOM text of every screen and state, not just the source.
 - Every `data-testid`, route and behaviour from stage 2 is unchanged.
+
+
+---
+
+## 11. Stage 4 additions
+
+### 11.1 "already booked" became false again
+
+Stage 3 taught the grid to say *why* a slot is unavailable, reading the server's two rules. Stage 4
+lets a manager close a table, and the spec makes `no_overlap` false for a closure **exactly as for
+a conflicting booking** — the API exposes nothing that tells the browser which it is. So the word
+"already booked" was being printed over every table a restaurant had closed, which is false.
+
+The `no_overlap` reason is now **"not available at this time"**, true whichever the cause. The
+capacity reason is still named exactly ("too small for your party"), because that one is genuinely
+known. Measured before the fix: all 7 cells of a closed table claimed to be already booked.
+
+### 11.2 Service recovery
+
+One new screen, reached from the top bar. It is **not** at its own path: the stage-2 spec says only
+`/`, `/signup`, `/login` and `/lookup` must be reachable by URL and that "Other screens must be
+reachable through the UI", and stage 4 requires no new screen at all — so it rides on `/` as
+`?view=recovery` and needs no server route. (The coordinator was asked and declined a `/recovery`
+route: it is the final stage, every stage passes, and a Go change for a prettier URL is not worth
+the risk. Recorded in `NOTES.md`.)
+
+**Top bar.** "Service recovery" sits after "Reservation lookup" and is shown to **every signed-in
+user**, never to a signed-out one. The browser never guesses who is a manager — it does not know
+and must not pretend to. The server decides, and a non-manager gets the refusal in 11.3.
+
+**Layout**, same 920px centred column as `/lookup`:
+
+```
+ eyebrow / "Close a table, keep the bookings" / one supporting line
+ ┌ form card ─────────────────────────────────────────────┐
+ │ Restaurant ▾              Table out of use ▾            │
+ │ How long is it out?  (times are <IANA zone>)            │
+ │ [from date] [from time] [to date] [to time]             │
+ │ ── Preview plan ·  "Nothing changes until you press…"   │
+ └─────────────────────────────────────────────────────────┘
+ ┌ result card — one of the states in 11.3 ────────────────┐
+```
+
+At 620px the two selects go side by side; at 900px the four date/time fields sit in one row. At
+375px everything stacks. The result card never moves the form.
+
+**The plan table.** Preview can only show what the API gives a manager: reference, the tables the
+booking *would* sit at, and changed-or-unchanged — plus bookings affected, how many have to move,
+and seats left spare. Party size and start time are **not** available at preview, because
+`GET /reservations/{reference}` is owner-only and a manager is not the owner (verified: 404). After
+**apply**, the response carries the full reservation objects, so the applied table adds **Party**
+and **Starts**. Columns are labelled for their tense: "Would sit at / Moves / Stays" before,
+"Seated at / Moved / Unchanged" after.
+
+**Times are the restaurant's, not the browser's.** The manager types wall-clock time; the API wants
+explicit-offset instants. `localToInstant()` resolves the offset in force **in the restaurant's own
+zone on that date** via `Intl.DateTimeFormat` with `timeZone`, iterating to settle, then formats
+`YYYY-MM-DDTHH:MM:00±HH:MM`. Each end is resolved separately, so a closure that straddles a
+daylight-saving change gets the right offset at each end. The zone is named on screen beside the
+fields, and the plan's closure window is read back in that same zone.
+
+### 11.3 The states, each visibly distinct and in plain words
+
+| State | What it shows |
+|---|---|
+| signed out | the form is hidden; "Sign in to close a table" and a Sign in button |
+| idle | an invitation: choose the table and hours, then Preview plan |
+| loading | skeleton blocks in the shape of the plan card |
+| previewed | heading, closure window in the restaurant's zone, three stat tiles, the plan table, "Nothing has changed yet", **Apply plan** + Start again |
+| applied | "Plan applied" in `--success` with a tick, the richer table, and a note that references are unchanged so guests' confirmations still work |
+| refused, not a manager | **"This is for restaurant managers."** — the exact wording, in `--warning`. No role switch exists anywhere |
+| no feasible plan | "There is no way to reseat everyone." and why, in `--danger` |
+| plan out of date | "This plan is out of date." in `--warning`, with a **Preview again** button |
+| plan already applied | says so, offers Start again |
+| planning limit | "That is too much to replan at once." with the suggestion to close a shorter stretch |
+| table already closed | 409 `table_unavailable` on a window overlapping an existing closure |
+| end before start | caught before any request is sent |
+| no response | "We did not hear back." — a preview never changes anything; an apply says plainly that it cannot tell, and offers a fresh preview |
+
+Every failure says what has *not* changed, because the manager's next question is always "did that
+do something?". No raw error code is ever printed.
+
+### 11.4 Rules kept
+
+- **`restaurant_revision` and `plan_id` are never rendered.** They are used only to apply the plan
+  the manager previewed and to recognise a stale one. Verified against the rendered DOM text.
+- Hooks for testing: `recovery-restaurant`, `recovery-table`, `recovery-from-date`,
+  `recovery-from-time`, `recovery-to-date`, `recovery-to-time`, `recovery-preview`,
+  `recovery-plan`, `recovery-apply`, `recovery-applied`, `recovery-error`. None collides with a
+  spec hook, and `auth-error` is deliberately **not** reused here.
+- Every earlier screen, route and hook is untouched.

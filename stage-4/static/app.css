@@ -674,6 +674,83 @@ button.cell[aria-pressed="true"]:hover { transform: none; }
 .detail-top { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: center; justify-content: space-between; }
 .detail-ref { font-size: var(--fs-h2); font-weight: 700; letter-spacing: .04em; overflow-wrap: break-word; }
 
+/* ---------------------------------------------------------------- service recovery */
+
+.recovery-wrap {
+  max-width: 920px; margin: 0 auto;
+  padding-block: var(--s7) var(--s9);
+  display: grid; gap: var(--s6);
+}
+.recovery-head { display: grid; gap: var(--s3); }
+.recovery-head h1 { font-size: var(--fs-h1); font-weight: 650; letter-spacing: -.01em; }
+.recovery-head p { color: var(--muted); max-width: 62ch; }
+
+.recovery-card { padding: var(--s6); display: grid; gap: var(--s6); }
+
+.field-row { display: grid; gap: var(--s4); }
+@media (min-width: 620px) { .field-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .when .field-row { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+.when {
+  border: 0; margin: 0; padding: 0;
+  display: grid; gap: var(--s4); min-width: 0;
+}
+.when legend { padding: 0; font-size: var(--fs-sm); font-weight: 600; }
+
+.recovery-actions {
+  border-top: 1px solid var(--line); padding-top: var(--s5);
+  display: grid; gap: var(--s3); justify-items: start;
+}
+
+.plan-card { padding: var(--s6); display: grid; gap: var(--s5); }
+.plan-head { display: grid; gap: var(--s2); }
+.plan-head h2 { font-size: var(--fs-h2); font-weight: 650; letter-spacing: -.01em; }
+
+.plan-stats { display: grid; gap: var(--s3); }
+@media (min-width: 560px) { .plan-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.stat {
+  padding: var(--s4); border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--sunken); display: grid; gap: 2px; min-width: 0;
+}
+.stat .k { font-size: var(--fs-xs); font-weight: 600; letter-spacing: .08em;
+           text-transform: uppercase; color: var(--muted); }
+.stat .v { font-size: var(--fs-h3); font-weight: 650; overflow-wrap: break-word; }
+
+.plan-scroll {
+  position: relative; overflow: auto; min-width: 0; max-width: 100%;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+}
+table.plan { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 520px; }
+table.plan th, table.plan td {
+  padding: var(--s3) var(--s4); text-align: left; vertical-align: middle;
+}
+table.plan thead th {
+  position: sticky; top: 0; z-index: 1; background: var(--surface);
+  font-size: var(--fs-sm); font-weight: 600; color: var(--muted);
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+table.plan tbody tr + tr td { border-top: 1px solid var(--line); }
+/* NOT .ref - that class is the confirmation screen's 34px reference, and reusing it here
+   rendered the booking code at display size inside a table row */
+table.plan td.bref { font-weight: 650; letter-spacing: .03em; white-space: nowrap; }
+table.plan td.seat { font-weight: 650; }
+
+.tag {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  padding: 3px var(--s3); border-radius: var(--r-full);
+  font-size: var(--fs-sm); font-weight: 600; border: 1px solid; white-space: nowrap;
+}
+.tag svg { width: 14px; height: 14px; }
+.tag[data-changed="true"] { border-color: var(--accent-edge); background: var(--accent); color: var(--on-accent); }
+.tag[data-changed="false"] { border-color: var(--line-strong); background: var(--sunken); color: var(--muted); }
+
+.plan-actions { display: grid; gap: var(--s3); }
+@media (min-width: 560px) { .plan-actions { grid-template-columns: auto auto; justify-content: start; } }
+
+.applied-head { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.applied-head .ok { color: var(--success); font-weight: 650; display: inline-flex; gap: var(--s2); align-items: center; }
+.applied-head .ok svg { width: 20px; height: 20px; }
+
 /* ---------------------------------------------------------------- footer */
 
 .foot {

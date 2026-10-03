@@ -1,7 +1,136 @@
 # Tablekeeper frontend — render passes, what each one changed, and the scores
 
-Stage 3's record is first; stage 2's follows it unchanged, because it is still the record of how
-these screens were built.
+Newest stage first. Each earlier stage's record follows, unchanged.
+
+---
+
+# Stage 4 — reflecting applied plans, and the Service recovery screen
+
+Two pieces, in the order the dispatch set them.
+
+## Part 1 — do the existing screens reflect an applied plan?
+
+Verified by applying a real one, not by reading code. Logged in as the demo manager, closed the
+table under a confirmed booking for a whole day, previewed, applied, then looked at the screens.
+(The first candidate was a 5-guest booking on the 6-seat Long table; closing that leaves nowhere
+to go and the server correctly answers `no_feasible_plan`. Selecting by ascending party size gives
+a case where a move is actually possible.)
+
+**The mechanics already worked, and nothing was changed for them.** Ten checks in `replan.py`:
+`/lookup` shows the table the plan moved the booking *to*, no longer shows the old one, still
+reports it confirmed, and the reference is unchanged; `/` never offers the closed table, every
+cell still matches `available_table_ids` exactly, and combination cells involving the closed table
+go too. That falls out of the grid reading `available_table_ids`/`available_options` and the lookup
+card reading `table_ids`.
+
+**One thing did need fixing**, and it is the third time this run that widening the service made an
+existing screen say something false. Stage 4 makes `no_overlap` false for a manager's closure
+exactly as for a conflicting booking, and nothing in the API distinguishes them — so the stage-3
+wording "already booked" was being printed over every closed table. Measured: all 7 cells of the
+closed table claimed it. Now "not available at this time", true of either cause. Committed and
+reported separately as **934bd61** before Part 2 began, per the dispatch's sequencing.
+
+## Part 2 — the Service recovery screen
+
+Design in `DESIGN.md` §11.2–11.4. The decisions worth recording:
+
+**No new server route.** I asked the coordinator whether to request `GET /recovery` from the
+implementer and recommended against it; the coordinator agreed. The stage-2 spec requires only
+four screens to be URL-addressable and says "Other screens must be reachable through the UI", and
+stage 4 requires no new screen at all — so it ships at `/?view=recovery` with **zero** server
+change. On the final stage, with every stage passing, a Go change for a tidier URL is not worth
+the risk. Judgement call, recorded.
+
+**The top bar item is shown to every signed-in user**, never gated on a guessed role. The browser
+does not know who manages what and must not pretend to; the server decides and a non-manager sees
+the refusal. Verified: a signed-in non-manager *does* see the item, and gets
+"This is for restaurant managers." when they try.
+
+**What the preview table can honestly show.** The dispatch asked for reference, party size, start
+time, tables before and after, and changed-or-unchanged. Only part of that is obtainable:
+`GET /reservations/{reference}` is owner-only and a manager is not the owner — verified, it returns
+**404**. The preview response carries reference, the proposed `table_ids` and `changed`, and
+nothing else. So the preview table shows those plus the three counts, and the **applied** table
+adds Party and Starts, which the apply response does return. "Tables before" is shown only where it
+is knowable — an unchanged row's current tables are its proposed ones. I did not invent the rest,
+and I did not quietly drop it either: it is flagged here and in the handoff.
+
+**Times are the restaurant's, not the browser's.** `localToInstant()` resolves the offset in force
+in the restaurant's own zone on that date and formats an explicit-offset instant. Verified at the
+wire: typing 18:30–21:45 for Harbour Table sends `...T18:30:00+11:00` / `...T21:45:00+11:00`, and
+that offset matches the one the API itself uses for that date. Each end is resolved separately so a
+closure straddling a daylight-saving change is right at both ends — **not verified** against an
+actual DST boundary, see below.
+
+## What looking at it caught
+
+Two defects the automated checks passed clean over:
+
+1. **The booking reference rendered at 34px inside a table row.** I had put `class="ref"` on the
+   cell, which collides with the confirmation screen's display-sized `.ref`. Renamed to `.bref`.
+   No checker would have caught this — it is not an overflow, not a contrast failure, not an axe
+   rule. Only looking at it did.
+2. **The "Moves" tag used the alert glyph**, which reads as a warning for something that is simply
+   a move, and both tables used the present tense even after the plan had been applied. Now an
+   arrow glyph, and "Moved / Unchanged" once applied.
+
+## Final check results
+
+| Check | Result |
+|---|---|
+| `replan.py` — existing screens reflect an applied plan | **10 passed, 0 failed** |
+| `recovery.py` — every Service recovery state, and the timezone conversion | **24 passed, 0 failed** |
+| `behaviour.py` — every stage-2 hook, competing-client and idempotency rules | **55 passed, 0 failed** |
+| `policies.py` — stage-3 policy selection | **9 passed, 0 failed** |
+| `reasons.py` — unavailable-cell reasons match the server's rules | **6 passed, 0 failed** |
+| `a11y.py` — axe-core over the earlier screens, 108 scans | **0 violations at any impact** |
+| `a11y_recovery.py` — axe-core over the new screen, 36 scans, plus a keyboard walk | **0 violations, 0 focus problems** |
+| `focus.py` — keyboard walk of the earlier screens | **0 focus problems** |
+| `render_recovery.py` — 48 captures of the new screen | **0 with issues**: no horizontal scroll, no target under 24px, nothing under 12px |
+| `render.py` — the earlier screens | **clean** at 375/768/1280, both themes |
+| `motion.py` | reduce → 0 animating; no-preference → 61 |
+
+`policies.py` needed a fix of its own this stage: it had anchored its policy to "tomorrow", so
+whether the Mon–Sun week straddled the effective date depended on which weekday it was run. It now
+anchors to a Wednesday and asserts the straddle directly — Mon/Tue on the old hours, Wed–Sun on the
+new. A test that passes only on some days is not evidence.
+
+## Stage 4 scores — the Service recovery screen
+
+Scored after the improvement pass described above.
+
+| Axis | Score | Note |
+|---|---|---|
+| Identity | 5 | same bar, card, type scale, control styles and voice as the rest |
+| Hierarchy & layout | 5 | form on top, result below, the form never moves when a state changes |
+| Imagery | 4 | the brief assigns no illustration to this screen, so it is type and whitespace by design — the plainest screen in the set, deliberately |
+| Typography | 5 | nothing under 12px; the stat tiles and table share the existing scale |
+| States | 5 | all twelve states distinct, in plain words, each saying what has *not* changed |
+| Craft & motion | 4 | skeletons, a success rise, reduced-motion respected; deliberately restrained, as elsewhere |
+| Accessibility | 5 | 36 axe scans with zero violations, 58 focus stops probed with zero problems, every input labelled |
+| Responsiveness | 5 | 375/768/1280 clean in both themes, no horizontal scroll |
+| Reference match | n/a | not drawn in `reference/`; built in the same visual language |
+
+Nothing below 4. The earlier screens keep their stage-3 scores.
+
+## Stage 4 — what I did not check
+
+Everything in the earlier "not checked" sections still stands (no real assistive technology,
+Chromium only, no physical touch device). In addition:
+
+- **No daylight-saving boundary was exercised.** The offset is resolved per end, so a closure
+  straddling a transition should be right at both ends, and the single-offset case is verified at
+  the wire against the API's own offset — but I did not construct a closure spanning an actual DST
+  change and confirm it. This is the thinnest-tested part of the new screen.
+- **`planning_limit` (422) and `plan_already_applied` (409) have handlers and copy but were never
+  triggered.** The demo data has four tables and a handful of bookings, well inside the limits, and
+  the apply path mints a fresh idempotency key each time. The other states — refused, no feasible
+  plan, stale plan, end-before-start, signed out, loading, previewed, applied — were all driven for
+  real.
+- **Recurring series have no UI**, so `POST /series/{id}/amend` was never exercised through the
+  browser. No screen is required for it and the dispatch did not ask for one.
+- The applied table's "tables before" column is **absent by necessity**, not by choice: the API
+  does not let a manager read another diner's reservation.
 
 ---
 

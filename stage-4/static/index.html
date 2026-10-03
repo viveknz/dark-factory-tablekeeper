@@ -37,8 +37,11 @@
     </a>
 
     <nav class="nav" aria-label="Main">
-      <a href="/" data-nav="/">Find a table</a>
-      <a href="/lookup" data-nav="/lookup">Reservation lookup</a>
+      <a href="/" data-nav-screen="home">Find a table</a>
+      <a href="/lookup" data-nav-screen="lookup">Reservation lookup</a>
+      <!-- stage 4 on. Shown to every signed-in user; the SERVER decides who may actually use
+           it, and a non-manager gets a friendly refusal. The browser never guesses the role. -->
+      <a href="/?view=recovery" data-nav-screen="recovery" data-nav-recovery hidden>Service recovery</a>
     </nav>
 
     <div class="bar-auth" data-bar-auth>
@@ -232,6 +235,62 @@
       </form>
       <p class="auth-foot">Already have an account? <a class="link" href="/login" data-keep-next>Sign in</a></p>
     </div>
+  </div>
+</section>
+
+<!-- ================================================ Service recovery (?view=recovery) -->
+<section data-screen="recovery" hidden>
+  <div class="container recovery-wrap">
+    <div class="recovery-head">
+      <p class="eyebrow">Service recovery</p>
+      <h1>Close a table, keep the bookings</h1>
+      <p>A fridge breaks, a window leaks, a table wobbles. Tell us which table is out and for how
+        long, and we will work out where its guests can sit instead — then show you the plan before
+        anything changes.</p>
+    </div>
+
+    <form class="card recovery-card" data-recovery-form novalidate>
+      <div class="field-row">
+        <div class="field">
+          <label for="rec-restaurant">Restaurant</label>
+          <select class="input" id="rec-restaurant" data-testid="recovery-restaurant" required></select>
+        </div>
+        <div class="field">
+          <label for="rec-table">Table out of use</label>
+          <select class="input" id="rec-table" data-testid="recovery-table" required></select>
+        </div>
+      </div>
+
+      <fieldset class="when">
+        <legend>How long is it out?</legend>
+        <p class="field-help" data-recovery-zone></p>
+        <div class="field-row">
+          <div class="field">
+            <label for="rec-from-date">Closed from (date)</label>
+            <input class="input" id="rec-from-date" data-testid="recovery-from-date" type="date" required>
+          </div>
+          <div class="field">
+            <label for="rec-from-time">Closed from (time)</label>
+            <input class="input" id="rec-from-time" data-testid="recovery-from-time" type="time" required>
+          </div>
+          <div class="field">
+            <label for="rec-to-date">Back in use (date)</label>
+            <input class="input" id="rec-to-date" data-testid="recovery-to-date" type="date" required>
+          </div>
+          <div class="field">
+            <label for="rec-to-time">Back in use (time)</label>
+            <input class="input" id="rec-to-time" data-testid="recovery-to-time" type="time" required>
+          </div>
+        </div>
+      </fieldset>
+
+      <div class="recovery-actions">
+        <button class="btn btn-primary" type="submit" data-testid="recovery-preview">Preview plan</button>
+        <p class="hold-note">Nothing changes until you press Apply plan on the next step.</p>
+      </div>
+    </form>
+
+    <div data-recovery-body></div>
   </div>
 </section>
 
