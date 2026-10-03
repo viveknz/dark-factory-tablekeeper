@@ -1,4 +1,4 @@
-# Tablekeeper demo — Stage 2
+# Tablekeeper demo — Stage 3
 
 Two minutes to a working demo: two restaurants, combined tables, confirmed bookings on dates
 computed from the day you run this.
@@ -8,8 +8,8 @@ computed from the day you run this.
 From `stage-3/` (this stage's folder):
 
 ```sh
-docker build -t tablekeeper-stage2 .
-docker run --rm -e PORT=8080 -p 8080:8080 tablekeeper-stage2
+docker build -t tablekeeper-stage3 .
+docker run --rm -e PORT=8080 -p 8080:8080 tablekeeper-stage3
 ```
 
 Confirm it's up: `curl http://localhost:8080/health` → `{"status":"ok"}`.
@@ -42,7 +42,7 @@ Set `DEMO_SEED=1` when starting the container to load the same demo data automat
 (off by default; a later `POST /_test/reset` still fully replaces this seeded state):
 
 ```sh
-docker run --rm -e PORT=8080 -e DEMO_SEED=1 -p 8080:8080 tablekeeper-stage2
+docker run --rm -e PORT=8080 -e DEMO_SEED=1 -p 8080:8080 tablekeeper-stage3
 ```
 
 ## 3. Open the product
