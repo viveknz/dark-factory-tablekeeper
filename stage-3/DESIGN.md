@@ -5,7 +5,13 @@ Written by `df-frontend` before any screen code, per the frontend mandate. The s
 (`C:\Users\vivek\df-inputs\reference\`). Where my taste and the brief differ, the brief wins. Where
 the brief and the official stage-2 spec differ, the spec wins (the brief says so itself).
 
-Stage 3+ should start from this file and extend it rather than restating it.
+Stage 4+ should start from this file and extend it rather than restating it.
+
+> **Stage 3 (this stage).** No new screens; the visual system, type scale, spacing, colour roles
+> and every screen layout below are unchanged and were re-verified against the stage-3 service.
+> Three things did change, all in section 10 at the end of this file: the screens now select the
+> same **published policy** the server applies, an unavailable cell now says **why**, and the
+> legend's third swatch reads "Unavailable" rather than the reference's "Taken".
 
 ---
 
@@ -348,3 +354,85 @@ nothing is clipped, per `REFERENCE.md`.
   implementer through the coordinator.
 - 375px first. Every input has a visible `<label>` (never placeholder-only). Focus always visible.
   Touch targets ≥24px, ≥44px for primary controls. Contrast checked in both themes.
+
+
+---
+
+## 10. Stage 3 additions
+
+Stage 3 added no screens. It widened the service underneath the existing ones, and two of those
+widenings made the screens say things that were no longer true.
+
+### 10.1 Published policies — the screens select the same policy the server does
+
+From stage 3 a restaurant can publish dated policies that change opening hours, capacities,
+slot length, duration and cancellation cutoff. The catch is deliberate in the spec:
+
+> `GET /restaurants/{id}` still returns its **original fixture configuration**. Availability and
+> booking decisions use the **selected policy**, not that detail.
+
+The stage-2 screens read only the detail, so with a policy published they printed opening hours
+and capacities that contradicted the grid sitting right beside them (measured: hours strip
+"17:30–22:00" above a grid of 12:00/13:00/14:00 slots, and a row reading "Up to 2 guests" next to
+a cell that was available for a party of six). Fixed by selecting the policy client-side exactly
+as the server does:
+
+- `GET /restaurants/{id}/policies` is public; it is fetched inside the **same freshness-sequenced
+  operation** as the restaurant detail and the availability, so a stale policy list can never be
+  applied over a newer search.
+- `termsForDate(ymd)` picks the greatest `effective_from` not later than that date, ties broken by
+  the greatest `policy_version`, falling back to the fixture's own rules (policy 0). `effective_from`
+  is `YYYY-MM-DD`, so a string compare is a correct date compare.
+- It is treated as **optional**: a service that publishes no policies, or a failed request, simply
+  leaves policy 0 in force. The screens still work against a stage-1 or stage-2 service.
+
+What now reads from the selected policy rather than the fixture:
+
+| Shown | Policy selected for |
+|---|---|
+| the opening-hours strip, **per day** | each of the seven dates in the searched week — a policy may take effect mid-week, and the strip shows the old hours before it and the new hours from it on |
+| a row's capacity, and a combined row's summed capacity | the searched date |
+| "The table is held for … / you can change or cancel until …" | the **booking's own start date**, which is the policy whose terms that booking would accept |
+| the closed-day copy on the `no-slots` screen | that date |
+
+Table ids, labels, timezone and declared combinations cannot be changed by a policy, so those
+still come from the restaurant detail.
+
+### 10.2 An unavailable cell says why
+
+Stage 3 states that availability is decided by exactly two independent rules — `capacity` (the
+party fits) and `no_overlap` (nothing confirmed clashes) — and exposes both per table through
+`GET /availability?...&explain=true`.
+
+Before this, **every** unavailable cell announced "already taken", which is false for a table that
+is merely too small for the party. Now:
+
+- the availability request asks for `explain=true` and the server's answer is the authority;
+- when it is absent (an older service, or a stubbed response) the same two rules are derived from
+  what is already on screen: a row that fits the party can only be unavailable because something
+  clashes;
+- the words are plain and never the raw rule name: **"already booked"**, **"too small for your
+  party"**, or both. The `policy_version` that `explain` also carries is never rendered.
+
+Where it appears:
+
+- **once per row**, visibly, when the table can never fit this party: a third line under the
+  capacity, in `--warning`, reading "too small for 6 guests". Said once rather than repeated into
+  every cell.
+- **per cell**, as the visually-hidden state text and the `title`, so the hidden text is accurate
+  rather than uniformly "already taken".
+
+### 10.3 The legend's third swatch
+
+It reads **"Unavailable"**, where the reference screenshots read "Taken". Deliberate: from stage 3
+a row can be hatched because the table is too small for the party, which is not the same thing as
+taken, and the row itself now says which. A legend that said "Taken" about those rows would be
+stating something false. This is the only wording in the build that departs from the reference.
+
+### 10.4 Still true, re-verified
+
+- **No "Service recovery" item in the top bar.** Stage 4 only.
+- **No raw API field is ever rendered** — not `policy_version`, `revision`, `accepted_terms`,
+  `effective_from`, `capacities`, `series_id`, nor any raw rule name. Verified against the
+  rendered DOM text of every screen and state, not just the source.
+- Every `data-testid`, route and behaviour from stage 2 is unchanged.

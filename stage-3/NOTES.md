@@ -1,4 +1,144 @@
-# Stage 2 frontend — render passes, what each one changed, and the final scores
+# Tablekeeper frontend — render passes, what each one changed, and the scores
+
+Stage 3's record is first; stage 2's follows it unchanged, because it is still the record of how
+these screens were built.
+
+---
+
+# Stage 3 — re-verification, and the two things that stopped being true
+
+Stage 3 required no new screens. The job was to confirm the stage-2 screens still work against the
+widened service, and that is mostly what happened — but measuring turned up two places where the
+screens had quietly started saying something false, so those were fixed.
+
+## What was carried forward, and proof it was untouched
+
+`stage-3/DESIGN.md`, `NOTES.md`, `static/index.html`, `static/app.css`, `static/app.js` and all of
+`static/assets/` arrived byte-identical to my accepted stage-2 commit (`diff` clean on every file,
+and `git diff 31273ce HEAD -- stage-2/static stage-2/DESIGN.md stage-2/NOTES.md` empty).
+
+## Re-verification against the stage-3 service, before any change
+
+The stage-3 image was built and run with `static/` bind-mounted, and the whole stage-2 check suite
+pointed at it:
+
+| Check | Result against the stage-3 service |
+|---|---|
+| all four routes + JSON 404 for anything else | `/`, `/login`, `/signup`, `/lookup` → 200 `text/html; charset=utf-8`; `/nope` → 404 `application/json` |
+| `behaviour.py` (55 checks) | 55 passed, 0 failed |
+| `a11y.py` axe-core, 108 scans | 0 violations at any impact |
+| `focus.py` keyboard walk | 0 focus problems |
+| `motion.py` | reduce → 0 animating; no-preference → 54 |
+| no horizontal scroll, touch targets, font sizes | clean at 375/768/1280 in both themes |
+| "Service recovery" in the top bar | **absent**, as required before stage 4 |
+| raw API fields in rendered text | **none** — scanned the rendered DOM of every screen and state for `policy_version`, `accepted_terms`, `revision`, `no_overlap`, `capacities`, `series_id`, and for stray `undefined`/`null`/`NaN`/`[object Object]` |
+
+**Pixel evidence that nothing moved.** The full 108-shot render against stage 3 was compared with
+the accepted stage-2 render: 84 identical, 24 differing. Rather than hand-wave the 24, stage 3 was
+rendered a second time and compared against itself: **exactly the same 24 files differ run-to-run**,
+and the set difference is empty. So every difference is inherent nondeterminism — the random
+booking reference in the confirmation and lookup shots, and the loading skeleton's shimmer phase —
+and there were **zero visual regressions**.
+
+## The defect that confirmation found
+
+`GET /restaurants/{id}` deliberately keeps returning the *original fixture configuration*, while
+availability and booking decisions use the *published policy* for the date. The stage-2 screens
+read only the detail. Publishing a policy that moved Harbour Table to 12:00–15:00 and raised every
+capacity by 4 produced this, measured, not guessed:
+
+- the grid correctly showed slots at **12:00, 13:00, 14:00**, while the hours strip beside it still
+  read **"17:30–22:00"**;
+- Window 1 was correctly **available for a party of 6**, while its row still read **"Up to 2 guests"**.
+
+The screen contradicted itself in two places at once. The brief requires the week's opening hours
+beside the grid and rows labelled with capacity, and my own mandate says a screen must be correct
+for data I have never seen — so this is a correctness defect in the existing screens, not an
+enhancement, and fixing it is part of "do the screens still work". Fixed per DESIGN.md §10.1;
+the hold note now also quotes the terms of the policy the *booking's own start date* would accept.
+
+Proof (`policies.py`, 9 checks, all passing). The decisive one: with a policy effective on the
+Sunday, the week strip renders `Mon 17:30–22:00 … Sat 17:30–23:00  Sun 12:00–15:00` — per-day
+policy selection, not one policy smeared across the week.
+
+## The optional enhancement: taken, or too small?
+
+Stage 3 decides availability by exactly two rules and exposes both through `explain=true`. Checking
+that surfaced a second false statement: **every** unavailable cell announced "already taken",
+including tables that were merely too small for the party. That is simply wrong, so it was worth
+doing. Built per DESIGN.md §10.2, and the legend's "Taken" became "Unavailable" (§10.3) because the
+old word was false for those rows.
+
+`reasons.py`, 6 checks, all passing — including cross-checking **21 unavailable cells' reasons
+against the server's own two rules**, that a too-small table never claims to be "already booked",
+that an available cell carries no reason, that every cell still shows its time as text, and that no
+raw rule name or policy field is rendered.
+
+## The optional enhancement I declined, and why
+
+A reservation-history view on `/lookup`. `GET /reservations/{reference}/history` exists and a
+cancelled reservation keeps its history, so it would work. I decided against it:
+
+- nothing in the spec, the brief or the dispatch asks for it — the spec says outright that no new
+  screens are required for explanations or history;
+- **every history entry carries `revision` and the complete `accepted_terms`** — precisely the
+  fields the dispatch singles out as never allowed into rendered text. It is the highest-leakage
+  data surface in the stage, added for a read-only convenience nobody requested;
+- this stage's remit is confirmation. The two fixes above correct things that were *false on
+  screen*; a history panel corrects nothing. I would rather hand over a `/lookup` that is verified
+  pixel-identical to its accepted stage-2 self than a new panel whose states only I have ever seen.
+
+If a later stage wants it, DESIGN.md §3.5 is the place to extend, and the only hard rule is that
+`revision` and `accepted_terms` are read for logic and never printed.
+
+## After the changes — everything re-run
+
+| Check | Result |
+|---|---|
+| `behaviour.py` — every stage-2 hook and the competing-client rules | **55 passed, 0 failed** |
+| `policies.py` — the screens describe the policy the server applies | **9 passed, 0 failed** |
+| `reasons.py` — reasons match the server's rules, nothing raw rendered | **6 passed, 0 failed** |
+| `a11y.py` — axe-core, 108 scans | **0 violations at any impact** |
+| `focus.py` — keyboard walk, 5 screens × 3 widths × 2 themes | **0 focus problems** |
+| horizontal scroll / touch targets / font sizes | **clean** at 375/768/1280, both themes |
+| visual regression on the demo data (no policies published) | **zero** — the 23 files that differ are exactly the known nondeterministic set |
+
+## Stage 3 scores
+
+The screens are the stage-2 screens, so the stage-2 scores stand. Two axes moved:
+
+| | Stage 2 | Stage 3 | Why |
+|---|---|---|---|
+| Home — states | 5 | **5** | holds: the new reasons are a distinct, plainly-worded state rather than a recoloured one |
+| Home — reference match | 5 | **4** | one deliberate departure: the legend reads "Unavailable", not the reference's "Taken". Recorded in DESIGN.md §10.3. I am keeping the departure — the reference word is false for a capacity-excluded row, and I will not print something false to match a sample |
+| Home — hierarchy & layout | 5 | **5** | the row reason is a third line in an existing block; no layout moved, verified pixel-identical |
+
+Everything else is unchanged at 5, with craft & motion still 4 for the reason given in the stage-2
+section below.
+
+## Stage 3 — what I did not check
+
+Everything in the stage-2 "What I did not check" section still stands (no real assistive tech, no
+non-Chromium browser, no physical touch device). In addition, for stage 3:
+
+- **Recurring series and collective moves have no UI**, by design — no screen is required for them
+  and I built none, so I have not exercised `POST /series`, `GET /series/{id}` or
+  `POST /reservation-moves` through the browser at all.
+- **Policy selection is verified against published policies I created myself**, covering: no policy
+  at all, a policy effective mid-week, a date before any policy, and a policy changing hours,
+  capacities, duration and cutoff together. I did **not** test several policies sharing one
+  `effective_from` (the tie-break on greatest `policy_version` is implemented and matches the spec's
+  wording, but it is reasoned, not observed), nor a policy effective in the past.
+- **`explain=true` is only read for the words in an unavailable cell.** `data-available` still comes
+  from `available_table_ids` alone, so a wrong explanation could never make a cell wrongly
+  clickable. I did not test a service that returns `explain` with a table missing from it; that
+  path falls back to the local derivation.
+
+---
+
+# Stage 2 — how these screens were built
+
+
 
 Written by `df-frontend`. Everything below is something I ran or a screenshot I looked at. Where I
 did not check something, it says so.

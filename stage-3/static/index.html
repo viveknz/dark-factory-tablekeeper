@@ -128,7 +128,10 @@
         <ul class="legend" data-legend hidden>
           <li><span class="swatch" aria-hidden="true"></span> Available</li>
           <li><span class="swatch swatch-chosen" aria-hidden="true"></span> Your choice</li>
-          <li><span class="swatch swatch-taken" aria-hidden="true"></span> Taken</li>
+          <!-- "Unavailable", not the reference's "Taken": from stage 3 a row can be hatched
+               because the table is too small for the party, which is not the same as taken,
+               and the row itself says which. -->
+          <li><span class="swatch swatch-taken" aria-hidden="true"></span> Unavailable</li>
         </ul>
 
         <div data-results-body></div>

@@ -342,6 +342,7 @@
       rest: null,          /* restaurant detail the applied results describe */
       search: null,        /* {restaurantId, date, partySize} the applied results describe */
       slots: null,
+      policies: [],        /* published policies for the restaurant the results describe */
       sel: null,
       loading: false,
       notice: null,        /* {kind:'error'|'uncertain', title, lines[]} */
@@ -387,10 +388,49 @@
         return t ? tableName(t.label) : id;
       });
     }
-    function capacityFor(rest, ids) {
-      var total = 0;
-      ids.forEach(function (id) { var t = tableById(rest, id); if (t) total += t.capacity; });
-      return total;
+    /* ---- published policies -----------------------------------------------------------
+       From stage 3 a restaurant can publish dated policies that change opening hours,
+       capacities and durations. GET /restaurants/{id} deliberately keeps returning the
+       ORIGINAL fixture configuration, while availability and booking decisions use the
+       policy selected for the date. Reading only the detail would print opening hours and
+       capacities that contradict the grid sitting right next to them, so these screens
+       select the same policy the server would: the greatest effective_from not later than
+       the date, ties broken by the greatest policy_version, falling back to the fixture's
+       own rules (policy 0). effective_from is YYYY-MM-DD, so a string compare is a correct
+       date compare. */
+    function termsForDate(ymd) {
+      var pols = state.policies || [], best = null, i, p;
+      for (i = 0; i < pols.length; i++) {
+        p = pols[i];
+        if (!p || !p.effective_from || p.effective_from > ymd) continue;
+        if (!best || p.effective_from > best.effective_from ||
+            (p.effective_from === best.effective_from &&
+             (p.policy_version || 0) > (best.policy_version || 0))) {
+          best = p;
+        }
+      }
+      return best || state.rest || {};
+    }
+
+    function capacityOf(tableId, terms) {
+      var caps = terms && terms.capacities;
+      if (caps && typeof caps[tableId] === 'number') return caps[tableId];
+      var t = tableById(state.rest, tableId);
+      return t ? t.capacity : 0;
+    }
+
+    /* the Monday-to-Sunday week containing a date, so every day in the strip can be read
+       under the policy in force on that day - a policy may take effect mid-week */
+    function weekDatesFor(ymd) {
+      var p = ymdParts(ymd), out = [], i, mon, x;
+      if (!p) return null;
+      mon = new Date(p.y, p.m - 1, p.d - ((new Date(p.y, p.m - 1, p.d).getDay() + 6) % 7));
+      for (i = 0; i < 7; i++) {
+        x = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + i);
+        out.push(x.getFullYear() + '-' +
+                 ('0' + (x.getMonth() + 1)).slice(-2) + '-' + ('0' + x.getDate()).slice(-2));
+      }
+      return out;
     }
     function validPairs(rest) {
       if (!rest || !rest.combinable) return [];
@@ -405,13 +445,16 @@
       if (!rest) { show(hours, false); return; }
       hoursZone.textContent = 'Times in ' + rest.timezone;
       clear(hoursDays);
+      var week = weekDatesFor(dateYMD);
       var todayCode = dateYMD ? WEEKDAY_CODE[ymdWeekdayIndex(dateYMD)] : null;
-      WEEK_ORDER.forEach(function (code) {
-        var spans = (rest.opening_hours || []).filter(function (o) {
+      WEEK_ORDER.forEach(function (code, idx) {
+        var dayDate = week ? week[idx] : null;      /* WEEK_ORDER and week are both mon..sun */
+        var terms = dayDate ? termsForDate(dayDate) : (rest || {});
+        var spans = (terms.opening_hours || []).filter(function (o) {
           return String(o.weekday || '').toLowerCase() === code;
         }).map(function (o) { return o.opens + '–' + o.closes; });
         var txt = spans.length ? spans.join(', ') : 'Closed';
-        var isSearched = code === todayCode;
+        var isSearched = dayDate ? dayDate === dateYMD : code === todayCode;
         hoursDays.appendChild(h('li', { class: 'hday', 'data-today': isSearched ? 'true' : 'false' }, [
           h('span', { class: 'd' }, [
             WEEKDAY_SHORT[WEEKDAY_CODE.indexOf(code)],
@@ -427,27 +470,75 @@
     /* ---- the availability grid -------------------------------------------------------- */
 
     function rowsFor(rest) {
-      var rows = [];
+      /* capacities come from the policy in force on the searched date, never from the
+         fixture detail, so a row never claims a size the grid beside it contradicts */
+      var terms = termsForDate(state.search ? state.search.date : ''), rows = [];
+      var party = state.search ? state.search.partySize : 1;
       (rest.tables || []).forEach(function (t) {
+        var cap = capacityOf(t.id, terms);
         rows.push({
           ids: [t.id],
           testPart: t.id,
           name: tableName(t.label),
-          capacity: t.capacity,
-          capText: 'Up to ' + guestsText(t.capacity)
+          capacity: cap,
+          capText: 'Up to ' + guestsText(cap),
+          tooSmall: cap < party
         });
       });
       validPairs(rest).forEach(function (p) {
         var a = tableById(rest, p[0]), b = tableById(rest, p[1]);
+        var cap = capacityOf(p[0], terms) + capacityOf(p[1], terms);
         rows.push({
           ids: [p[0], p[1]],
           testPart: p[0] + '+' + p[1],
           name: tableName(a.label) + ' + ' + tableName(b.label),
-          capacity: a.capacity + b.capacity,
-          capText: 'Combined, up to ' + guestsText(a.capacity + b.capacity)
+          capacity: cap,
+          capText: 'Combined, up to ' + guestsText(cap),
+          tooSmall: cap < party
         });
       });
       return rows;
+    }
+
+    /* ---- why a slot is unavailable ----------------------------------------------------
+       Stage 3 decides availability by exactly two rules: capacity (party fits the table) and
+       no_overlap (nothing confirmed clashes). explain=true reports both per table. We read it
+       as the authority and translate it into plain words - never the raw rule name, never the
+       policy_version it also carries. If explain is absent (an older service, or a stubbed
+       response) the same two rules are derived from what is already on screen. */
+    function ruleHolds(slot, tableId, ruleName) {
+      var ex = slot.explain, i, j, e;
+      if (!ex || !ex.length) return null;
+      for (i = 0; i < ex.length; i++) {
+        e = ex[i];
+        if (!e || e.table_id !== tableId) continue;
+        for (j = 0; j < (e.rules || []).length; j++) {
+          if (e.rules[j] && e.rules[j].rule === ruleName) return !!e.rules[j].holds;
+        }
+      }
+      return null;
+    }
+
+    function unavailableReason(slot, row, party) {
+      var tooSmall = row.capacity < party, taken = false, i, ov, seen = false;
+      /* For a pair the capacity rule is about the summed capacity, which explain reports per
+         table, so the sum stays local. For a single table the server's answer wins. */
+      if (row.ids.length === 1) {
+        var c = ruleHolds(slot, row.ids[0], 'capacity');
+        if (c !== null) tooSmall = !c;
+      }
+      for (i = 0; i < row.ids.length; i++) {
+        ov = ruleHolds(slot, row.ids[i], 'no_overlap');
+        if (ov === null) continue;
+        seen = true;
+        if (ov === false) taken = true;
+      }
+      /* no explanation to read: a table that fits the party can only be unavailable because
+         something already clashes with it */
+      if (!seen) taken = !tooSmall;
+      if (tooSmall && taken) return 'already booked, and too small for your party';
+      if (tooSmall) return 'too small for your party';
+      return 'already booked';
     }
 
     function slotOffers(slot, ids) {
@@ -480,7 +571,10 @@
       var body = rows.map(function (row) {
         var cells = [h('th', { scope: 'row' }, [
           h('span', { class: 't-name', text: row.name }),
-          h('span', { class: 't-cap', text: row.capText })
+          h('span', { class: 't-cap', text: row.capText }),
+          /* said once on the row rather than repeated into every cell */
+          row.tooSmall ? h('span', { class: 't-why',
+            text: 'too small for ' + guestsText(state.search.partySize) }) : null
         ])];
         slots.forEach(function (slot, i) {
           var free = slotOffers(slot, row.ids);
@@ -518,10 +612,13 @@
                make that true. Its state is real text, not only the hatch and the strike. */
             cell = h('span', {
               class: 'cell',
-              'data-testid': testid, 'data-available': 'false'
+              'data-testid': testid, 'data-available': 'false',
+              /* the same plain words on hover/long-press as in the hidden text */
+              title: hhmm + ' — ' + unavailableReason(slot, row, state.search.partySize)
             }, [
               h('span', { class: 't', text: hhmm }),
-              h('span', { class: 'sr-only', text: context + ' — already taken' })
+              h('span', { class: 'sr-only', text: context + ' — ' +
+                unavailableReason(slot, row, state.search.partySize) })
             ]);
           }
           cells.push(h('td', null, cell));
@@ -573,7 +670,7 @@
     function renderNoSlots() {
       var rest = state.rest, date = state.search.date;
       var code = WEEKDAY_CODE[ymdWeekdayIndex(date)];
-      var openThatDay = (rest.opening_hours || []).some(function (o) {
+      var openThatDay = (termsForDate(date).opening_hours || []).some(function (o) {
         return String(o.weekday || '').toLowerCase() === code;
       });
       var title = openThatDay ? 'No times left that night.'
@@ -591,14 +688,15 @@
 
     /* ---- the review panel ------------------------------------------------------------- */
 
-    function holdNote(rest) {
-      var bits = [];
-      if (rest.reservation_duration_minutes) {
-        bits.push('The table is held for ' + minutesText(rest.reservation_duration_minutes) + '.');
+    /* the terms a booking starting on this date would actually accept */
+    function holdNote(startsAtLocal) {
+      var terms = termsForDate(dateOf(startsAtLocal)), bits = [];
+      if (terms.reservation_duration_minutes) {
+        bits.push('The table is held for ' + minutesText(terms.reservation_duration_minutes) + '.');
       }
-      if (rest.cancellation_cutoff_minutes) {
+      if (terms.cancellation_cutoff_minutes) {
         bits.push('You can change or cancel from Reservation lookup until ' +
-                  minutesText(rest.cancellation_cutoff_minutes) + ' before.');
+                  minutesText(terms.cancellation_cutoff_minutes) + ' before.');
       }
       return bits.join(' ');
     }
@@ -733,7 +831,7 @@
             : '';
           show(capNote, tooBig);
           footNote.textContent = !state.confirmed
-            ? holdNote(rest)
+            ? holdNote(sel.startsAtLocal)
             : (sameAsConfirmed()
                 ? 'Pressing Confirm booking again will not book a second table.'
                 : 'You have changed the details, so Confirm booking will make a second, ' +
@@ -922,10 +1020,18 @@
         api('GET', '/restaurants/' + encodeURIComponent(want.restaurantId)),
         api('GET', '/availability?restaurant_id=' + encodeURIComponent(want.restaurantId) +
                    '&date=' + encodeURIComponent(want.date) +
-                   '&party_size=' + encodeURIComponent(String(want.partySize)))
+                   '&party_size=' + encodeURIComponent(String(want.partySize)) +
+                   /* stage 3: the server's own reason for each table, so an unavailable cell
+                      can say WHY. available_table_ids is unchanged by this, and the grid's
+                      data-available still comes from it alone. */
+                   '&explain=true'),
+        /* public, and treated as optional: a service that publishes no policies, or a
+           failure here, simply leaves the fixture's own rules (policy 0) in force */
+        api('GET', '/restaurants/' + encodeURIComponent(want.restaurantId) + '/policies')
+          .then(null, function () { return { ok: false, data: null }; })
       ]).then(function (rs) {
         if (seq !== searchSeq) return;          /* a newer search has been issued: discard */
-        var rest = rs[0], avail = rs[1];
+        var rest = rs[0], avail = rs[1], pols = rs[2];
         state.loading = false;
 
         if (!rest.ok || !rest.data) {
@@ -940,6 +1046,7 @@
           state.slots = null;
           state.rest = rest.data;
           state.search = want;
+          state.policies = (pols && pols.ok && pols.data && pols.data.policies) || [];
           renderHours(rest.data, want.date);
           clear(resultsBody);
           resultsBody.appendChild(notice('danger', null, 'We could not load the times.',
@@ -950,6 +1057,7 @@
 
         state.rest = rest.data;
         state.search = want;
+        state.policies = (pols && pols.ok && pols.data && pols.data.policies) || [];
         state.slots = avail.data.slots || [];
         if (!opts.keepSelection) { state.sel = null; bookingPartyOverride = null; }
         if (!opts.keepNotice) state.notice = null;

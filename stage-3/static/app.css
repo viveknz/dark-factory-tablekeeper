@@ -458,6 +458,10 @@ table.grid tbody th .t-name {
 table.grid tbody th .t-cap {
   display: block; font-size: var(--fs-sm); color: var(--muted);
 }
+/* why a whole row is out: said once here instead of repeated into every cell */
+table.grid tbody th .t-why {
+  display: block; font-size: var(--fs-sm); color: var(--warning); font-weight: 600;
+}
 table.grid tbody tr + tr th, table.grid tbody tr + tr td { border-top: 1px solid var(--line); }
 table.grid td { text-align: center; }
 
