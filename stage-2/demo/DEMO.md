@@ -44,8 +44,11 @@ docker run --rm -e PORT=8080 -e DEMO_SEED=1 -p 8080:8080 tablekeeper-stage2
 
 ## 3. Open the product
 
-This stage has no browser screens yet (the frontend builds on top of this stage's commit) —
-drive the API directly, e.g.:
+Open http://localhost:8080/ in a browser and sign in with either demo login below. From there:
+search a restaurant/date/party size, click an available (or combined-table) slot to book it,
+and look up a booking by reference at http://localhost:8080/lookup.
+
+Prefer the API directly? It's the same data either way:
 
 ```sh
 curl http://localhost:8080/restaurants
@@ -61,6 +64,9 @@ curl "http://localhost:8080/availability?restaurant_id=r_harbour_table&date=2026
 
 ## What to try first
 
+- In the browser: sign in as `manager@df-demo.example` at `/login`, search Harbour Table for
+  the date of the Window 1 + Window 2 booking below at party size 4 — that combined-table slot
+  shows as taken while the Booth and Long table still show available.
 - `GET /restaurants` — "Harbour Table" (Window 1, Window 2, Booth, Long table; Window 1 +
   Window 2 are declared combinable) and "Lantern Noodle Bar" (Counter 1, Counter 2, Family).
 - Log in as `diner@df-demo.example` (`POST /auth/login`) and `GET /reservations` to see demo

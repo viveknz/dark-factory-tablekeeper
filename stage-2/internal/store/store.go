@@ -321,6 +321,80 @@ func (s *Store) ImportLocked(st ExportState) {
 	if s.Idempotency == nil {
 		s.Idempotency = map[string]*IdempotencyRecord{}
 	}
+	for _, rec := range s.Idempotency {
+		rec.ResponseBody = upgradeLegacyResponseBody(rec.ResponseBody)
+	}
+}
+
+// upgradeLegacyResponseBody reshapes a frozen idempotency response body that predates
+// combined tables (a stage-1 export's singular "table_id", no "table_ids") into this stage's
+// shape, so a lost-response retry replayed after import still returns a response that "always
+// carries table_ids" per spec, not the pre-stage-2 shape it was frozen in. Replaying must still
+// return the ORIGINAL booking's identity/fields unchanged -- only the table_id/table_ids
+// envelope is widened; everything else in the body is untouched. Handles both a single
+// reservation body and a POST /reservation-moves body (a "reservations" array). Returns body
+// unchanged if it does not look like either shape.
+func upgradeLegacyResponseBody(body string) string {
+	var generic map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &generic); err != nil {
+		return body
+	}
+	if listRaw, ok := generic["reservations"]; ok {
+		var list []map[string]json.RawMessage
+		if err := json.Unmarshal(listRaw, &list); err != nil {
+			return body
+		}
+		changed := false
+		for i, item := range list {
+			if upgradeTableIDsField(item) {
+				list[i] = item
+				changed = true
+			}
+		}
+		if !changed {
+			return body
+		}
+		newList, err := json.Marshal(list)
+		if err != nil {
+			return body
+		}
+		generic["reservations"] = newList
+		out, err := json.Marshal(generic)
+		if err != nil {
+			return body
+		}
+		return string(out)
+	}
+	if !upgradeTableIDsField(generic) {
+		return body
+	}
+	out, err := json.Marshal(generic)
+	if err != nil {
+		return body
+	}
+	return string(out)
+}
+
+// upgradeTableIDsField adds "table_ids":[table_id] to obj in place if it has a "table_id" but
+// no "table_ids" field, reporting whether it changed anything.
+func upgradeTableIDsField(obj map[string]json.RawMessage) bool {
+	if _, hasTableIDs := obj["table_ids"]; hasTableIDs {
+		return false
+	}
+	tableIDRaw, hasTableID := obj["table_id"]
+	if !hasTableID {
+		return false
+	}
+	var tableID string
+	if err := json.Unmarshal(tableIDRaw, &tableID); err != nil {
+		return false
+	}
+	idsJSON, err := json.Marshal([]string{tableID})
+	if err != nil {
+		return false
+	}
+	obj["table_ids"] = idsJSON
+	return true
 }
 
 // MarshalExport/UnmarshalExport let httpapi treat the state as an opaque JSON value.

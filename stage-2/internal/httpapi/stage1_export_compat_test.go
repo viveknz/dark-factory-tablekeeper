@@ -157,6 +157,16 @@ func TestImportAcceptsStage1ShapedExport(t *testing.T) {
 	if outRetry["reference"] != "LEGACY1" {
 		t.Errorf("retry returned reference %v, want the original LEGACY1 (no new booking)", outRetry["reference"])
 	}
+	// The replayed body is frozen from a stage-1 response (no "table_ids"), but spec says every
+	// POST /reservations response "always carries table_ids" -- the replay must be upgraded to
+	// the current shape, just like a live GET on the same reservation already is.
+	ids, ok = outRetry["table_ids"].([]interface{})
+	if !ok || len(ids) != 1 || ids[0] != "t_1" {
+		t.Errorf("retry table_ids = %v, want [t_1] (replay of a pre-migration idempotency record must still carry table_ids)", outRetry["table_ids"])
+	}
+	if outRetry["table_id"] != "t_1" {
+		t.Errorf("retry table_id = %v, want t_1", outRetry["table_id"])
+	}
 
 	// Still exactly one reservation for this user: the retry did not create a second booking.
 	_, outMe2 := doJSON(t, "GET", srv.URL+"/reservations", map[string]string{"Authorization": "Bearer legacy-token-abc123"}, nil)

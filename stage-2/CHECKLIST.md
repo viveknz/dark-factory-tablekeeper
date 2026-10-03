@@ -61,7 +61,7 @@ covers stage-2's additions and re-confirms the inherited behaviour still holds i
 | 17 | A stage-2 service accepts a stage-1-shaped export (no `combinable` field, singular `table_id`, no `status`) | verified | `TestImportAcceptsStage1ShapedExport`, `TestImportAcceptsStage1RestaurantWithoutCombinableField` |
 | 18 | Bearer tokens from the stage-1 export keep working after import | verified | `TestImportAcceptsStage1ShapedExport` (legacy token lists the imported reservation) |
 | 19 | Retained booking reference still works through direct lookup after import | verified | `TestImportAcceptsStage1ShapedExport` (`GET /reservations/LEGACY1`) |
-| 20 | A lost-response retry (same key+body) from before the export completes correctly after import, returning the original response, no duplicate booking | verified | `TestImportAcceptsStage1ShapedExport` (idempotency replay returns `LEGACY1` with 200, reservation count stays at 1) |
+| 20 | A lost-response retry (same key+body) from before the export completes correctly after import, returning the original response, no duplicate booking | verified | `TestImportAcceptsStage1ShapedExport` (idempotency replay returns `LEGACY1` with 200, reservation count stays at 1, and — fixed after an independent-review finding — the replayed body now carries `table_ids` just like a live `GET` on the same reservation, via `store.upgradeLegacyResponseBody` applied at import) |
 | 21 | No mid-request migration required — only import-between-requests | verified (by design) | import is a single atomic `ImportLocked` call under the store mutex; no code path attempts migration during an in-flight request |
 
 ## Static file serving
