@@ -536,9 +536,14 @@
       /* no explanation to read: a table that fits the party can only be unavailable because
          something already clashes with it */
       if (!seen) taken = !tooSmall;
-      if (tooSmall && taken) return 'already booked, and too small for your party';
+      /* Deliberately NOT "already booked". From stage 4 a manager can close a table, and the
+         spec makes no_overlap false for a closure exactly as for a conflicting booking - the
+         API gives the browser no way to tell the two apart. Saying "booked" about a table the
+         restaurant closed would be stating something false, so the words have to be true of
+         either cause. The capacity reason is still named exactly, because that one is known. */
+      if (tooSmall && taken) return 'too small for your party, and not available at this time';
       if (tooSmall) return 'too small for your party';
-      return 'already booked';
+      return 'not available at this time';
     }
 
     function slotOffers(slot, ids) {
