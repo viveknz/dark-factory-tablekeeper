@@ -1,0 +1,123 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"regexp"
+	"strings"
+)
+
+// decodeBody parses the request body as a JSON object (map of raw fields). An empty body is
+// treated as an empty object so "all fields missing" validation still runs normally.
+func decodeBody(data []byte) (map[string]json.RawMessage, *apiError) {
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return map[string]json.RawMessage{}, nil
+	}
+	var raw map[string]json.RawMessage
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	if err := dec.Decode(&raw); err != nil {
+		return nil, errMalformedRequest("body must be a JSON object")
+	}
+	return raw, nil
+}
+
+// fieldString extracts a string field. ok=false with err=nil means the field was absent.
+// A present-but-wrong-JSON-type value is 400 malformed_request.
+func fieldString(raw map[string]json.RawMessage, name string) (value string, present bool, err *apiError) {
+	rv, exists := raw[name]
+	if !exists {
+		return "", false, nil
+	}
+	if err := json.Unmarshal(rv, &value); err != nil {
+		return "", true, errMalformedRequest(name + " must be a string")
+	}
+	return value, true, nil
+}
+
+var localTimeRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$`)
+var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+var queryIntRe = regexp.MustCompile(`^[0-9]+$`)
+
+// fieldStartsAtLocal extracts starts_at_local with its endpoint-specific rule: any JSON type
+// other than string is 400 malformed_request (falls under the general wrong-type rule); a
+// string that is not a bare local YYYY-MM-DDTHH:MM is 422 validation_failed per spec §5.
+func fieldStartsAtLocal(raw map[string]json.RawMessage, name string) (value string, present bool, err *apiError) {
+	rv, exists := raw[name]
+	if !exists {
+		return "", false, nil
+	}
+	var s string
+	if err := json.Unmarshal(rv, &s); err != nil {
+		return "", true, errMalformedRequest(name + " must be a string")
+	}
+	if !localTimeRe.MatchString(s) {
+		return "", true, errValidationFailed(name + " must be a bare local YYYY-MM-DDTHH:MM")
+	}
+	return s, true, nil
+}
+
+// fieldPartySize extracts party_size with its endpoint-specific rule: any invalid value,
+// including the wrong JSON type (string, bool, object, array, float, null), is 422
+// validation_failed, never 400.
+var jsonNumberLiteralRe = regexp.MustCompile(`^-?\d+(\.\d+)?([eE][+-]?\d+)?$`)
+
+func fieldPartySize(raw map[string]json.RawMessage, name string) (value int, present bool, err *apiError) {
+	rv, exists := raw[name]
+	if !exists {
+		return 0, false, nil
+	}
+	// json.Number happily accepts a quoted JSON string too (its underlying kind is string),
+	// which would let party_size:"2" slip past as valid. Require the raw token itself to look
+	// like a bare JSON number literal first, so strings/bools/objects/arrays/null are all 422.
+	trimmed := strings.TrimSpace(string(rv))
+	if !jsonNumberLiteralRe.MatchString(trimmed) {
+		return 0, true, errValidationFailed(name + " must be a positive integer")
+	}
+	var n json.Number
+	if err := json.Unmarshal(rv, &n); err != nil {
+		return 0, true, errValidationFailed(name + " must be a positive integer")
+	}
+	i, convErr := n.Int64()
+	if convErr != nil {
+		return 0, true, errValidationFailed(name + " must be a positive integer")
+	}
+	// Reject values like "4.0" that round-trip through float: re-check the raw text has no '.' or 'e'.
+	text := n.String()
+	if strings.ContainsAny(text, ".eE") {
+		return 0, true, errValidationFailed(name + " must be a positive integer")
+	}
+	if i < 1 {
+		return 0, true, errValidationFailed(name + " must be at least 1")
+	}
+	return int(i), true, nil
+}
+
+func validEmail(email string) bool {
+	if strings.ContainsAny(email, " \t\n") {
+		return false
+	}
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	local, domain := parts[0], parts[1]
+	if local == "" || domain == "" || strings.Contains(domain, "@") {
+		return false
+	}
+	return true
+}
+
+// queryInt validates and parses an integer query parameter written as plain decimal digits
+// only: "1e9", "4.0" and "+4" are rejected regardless of numeric value.
+func queryInt(s string) (int, bool) {
+	if !queryIntRe.MatchString(s) {
+		return 0, false
+	}
+	n := 0
+	for _, c := range s {
+		n = n*10 + int(c-'0')
+		if n > 1<<31 {
+			break
+		}
+	}
+	return n, true
+}
