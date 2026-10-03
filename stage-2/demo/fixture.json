@@ -1,0 +1,66 @@
+{
+  "users": [
+    {
+      "id": "u_demo_diner",
+      "email": "diner@df-demo.example",
+      "password": "DemoPass-2026!",
+      "display_name": "Demo Diner"
+    },
+    {
+      "id": "u_demo_manager",
+      "email": "manager@df-demo.example",
+      "password": "DemoPass-2026!",
+      "display_name": "Demo Manager"
+    }
+  ],
+  "restaurants": [
+    {
+      "id": "r_harbour_table",
+      "name": "Harbour Table",
+      "timezone": "Australia/Melbourne",
+      "slot_minutes": 30,
+      "reservation_duration_minutes": 90,
+      "cancellation_cutoff_minutes": 120,
+      "opening_hours": [
+        {"weekday": "mon", "opens": "17:30", "closes": "22:00"},
+        {"weekday": "tue", "opens": "17:30", "closes": "22:00"},
+        {"weekday": "wed", "opens": "17:30", "closes": "22:00"},
+        {"weekday": "thu", "opens": "17:30", "closes": "22:00"},
+        {"weekday": "fri", "opens": "17:30", "closes": "23:00"},
+        {"weekday": "sat", "opens": "17:30", "closes": "23:00"},
+        {"weekday": "sun", "opens": "17:30", "closes": "22:00"}
+      ],
+      "tables": [
+        {"id": "t_window_1", "label": "Window 1", "capacity": 2},
+        {"id": "t_window_2", "label": "Window 2", "capacity": 2},
+        {"id": "t_booth", "label": "Booth", "capacity": 4},
+        {"id": "t_long_table", "label": "Long table", "capacity": 6}
+      ],
+      "combinable": [["t_window_1", "t_window_2"]]
+    },
+    {
+      "id": "r_lantern_noodle_bar",
+      "name": "Lantern Noodle Bar",
+      "timezone": "Australia/Melbourne",
+      "slot_minutes": 30,
+      "reservation_duration_minutes": 60,
+      "cancellation_cutoff_minutes": 60,
+      "opening_hours": [
+        {"weekday": "mon", "opens": "17:00", "closes": "21:30"},
+        {"weekday": "tue", "opens": "17:00", "closes": "21:30"},
+        {"weekday": "wed", "opens": "17:00", "closes": "21:30"},
+        {"weekday": "thu", "opens": "17:00", "closes": "21:30"},
+        {"weekday": "fri", "opens": "17:00", "closes": "21:30"},
+        {"weekday": "sat", "opens": "17:00", "closes": "21:30"},
+        {"weekday": "sun", "opens": "17:00", "closes": "21:30"}
+      ],
+      "tables": [
+        {"id": "t_counter_1", "label": "Counter 1", "capacity": 2},
+        {"id": "t_counter_2", "label": "Counter 2", "capacity": 2},
+        {"id": "t_family", "label": "Family", "capacity": 8}
+      ],
+      "combinable": []
+    }
+  ],
+  "reservations": []
+}
