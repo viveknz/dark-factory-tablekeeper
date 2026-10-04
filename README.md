@@ -35,7 +35,7 @@ Open http://localhost:8080/ and sign in at `/login`. These two accounts exist on
 
 Four seats share one BAND room: a coordinator that plans and accepts, an implementer that builds the service, a frontend that owns every screen, and a reviewer that checks everything and never fixes. [FACTORY.md](FACTORY.md) covers the setup, what went wrong, time and cost. [room.json](room.json) is the full room log, 4,350 events, downloaded from BAND unedited. The seat mandates are in [mandates/](mandates/).
 
-The presentation slides are in [slides/Dark-Factory-Tablekeeper.pdf](slides/Dark-Factory-Tablekeeper.pdf).
+The presentation slides are in [slides/Dark-Factory-Tablekeeper.pdf](slides/Dark-Factory-Tablekeeper.pdf). The demo video is on [YouTube](https://youtu.be/9r80VNcKlSw).
 
 I ran the official harness myself after every stage, outside the factory.
 
